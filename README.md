@@ -27,31 +27,24 @@ ADB로 화면을 캡처한 뒤 OpenCV 템플릿 매칭과 색상 판정으로 �
 키보드에서 `윈도우 키`를 누르고 `powershell`을 입력한 뒤 `Enter`를 누릅니다.
 파란색(또는 검은색) 창이 뜨면 됩니다.
 
-### 2단계. Git과 Python 설치 (처음 한 번만)
-아래 두 줄을 복사해서 PowerShell 창에 붙여넣고(마우스 오른쪽 클릭) `Enter`를 누릅니다.
-설치 창이 뜨면 "예"를 누르세요.
+### 2단계. 아래 한 줄 붙여넣기
+아래 한 줄을 복사해서 PowerShell 창에 붙여넣고(마우스 오른쪽 클릭) `Enter`를 누릅니다.
 ```powershell
-winget install --id Git.Git -e --accept-package-agreements --accept-source-agreements
-winget install --id Python.Python.3.12 -e --scope user --accept-package-agreements --accept-source-agreements
+[Net.ServicePointManager]::SecurityProtocol = 'Tls12'; irm https://raw.githubusercontent.com/l1539ym-cyber/windrunner-guide-auto/main/install.ps1 | iex
 ```
-> 설치가 끝나면 **PowerShell 창을 닫고 1단계부터 다시 엽니다.** (새로 설치한 프로그램을 인식시키기 위해)
-> 이미 설치되어 있다는 메시지가 나오면 그냥 넘어가면 됩니다.
+아래 과정이 **자동으로** 진행됩니다. (처음에는 3~5분 정도 걸립니다)
 
-### 3단계. 프로그램 내려받기 + 필요한 부품 설치
-새로 연 PowerShell 창에 아래 내용을 **통째로** 복사해서 붙여넣고 `Enter`를 누릅니다.
-바탕화면 위치를 자동으로 찾아 `windrunner` 폴더를 만들고, 그 안에 프로그램을 내려받습니다.
-```powershell
-$dir = Join-Path ([Environment]::GetFolderPath('Desktop')) 'windrunner'
-git clone https://github.com/l1539ym-cyber/windrunner-guide-auto.git $dir
-cd $dir
-$py = @("$env:LOCALAPPDATA\Programs\Python\Python312\python.exe", "$env:ProgramFiles\Python312\python.exe") | Where-Object { Test-Path $_ } | Select-Object -First 1
-& $py -m pip install -r requirements.txt
-explorer $dir
-```
-> 바탕화면 위치(OneDrive 바탕화면 포함)와 Python 설치 위치는 자동으로 찾습니다. 아무것도 고칠 필요가 없습니다.
-마지막에 `windrunner` 폴더 창이 열리면 설치가 끝난 것입니다.
+| 순서 | 하는 일 |
+|---|---|
+| 1/4 | Python이 없으면 설치. `winget`이 있으면 winget으로, **없으면 python.org에서 직접 내려받아** 설치 |
+| 2/4 | 바탕화면을 찾아(OneDrive 바탕화면 포함) `windrunner` 폴더를 만들고 최신 프로그램을 내려받음 (**Git 필요 없음**) |
+| 3/4 | 필요한 부품(opencv-python, numpy) 설치 |
+| 4/4 | `windrunner` 폴더 창을 열어 줌 |
 
-### 4단계. 실행
+`[4/4] 설치 완료`가 뜨고 `windrunner` 폴더 창이 열리면 끝입니다.
+> 설치 스크립트 내용은 이 저장소의 [`install.ps1`](install.ps1)에서 확인할 수 있습니다.
+
+### 3단계. 실행
 1. MuMu Player에서 게임을 켜고 **기본(전투) 화면**을 띄워 둡니다.
 2. 바탕화면 `windrunner` 폴더에서 **`run_guide.bat`을 더블클릭**합니다.
 3. 검은 창에 `시작 - 기기 ...`가 뜨면 동작 중입니다. 끄려면 그 창에서 `Ctrl + C`를 누르거나 창을 닫습니다.
@@ -59,23 +52,25 @@ explorer $dir
 > MuMu 창은 **최소화하지 마세요.** 최소화하면 자동으로 일시정지됩니다. 다른 창 뒤에 두는 것은 괜찮습니다.
 
 ### 새 버전으로 업데이트
-PowerShell을 열고 아래를 붙여넣습니다.
-```powershell
-cd (Join-Path ([Environment]::GetFolderPath('Desktop')) 'windrunner')
-git pull
-```
+**2단계의 한 줄을 그대로 다시 붙여넣으면** 됩니다. 프로그램 파일만 새 버전으로 바뀌고, 로그는 남아 있습니다.
 
 ### 잘 안 될 때
 | 증상 | 해결 |
 |---|---|
-| `winget`을 찾을 수 없다고 나옴 | Microsoft Store에서 "앱 설치 관리자(App Installer)"를 설치한 뒤 다시 시도 |
-| `git`을 찾을 수 없다고 나옴 | PowerShell 창을 닫고 새로 연 뒤 다시 시도 (그래도 안 되면 컴퓨터 재시작) |
-| `식이 null` / `& $py` 관련 오류 | Python이 설치되지 않은 것. 2단계의 Python 설치 줄을 다시 실행 |
-| `already exists and is not an empty directory` | 이미 설치되어 있다는 뜻. 위의 "업데이트"를 하면 됨 |
+| 빨간 글씨로 `설치 실패` / `오류 내용` | 인터넷 연결을 확인하고 2단계 한 줄을 다시 붙여넣기 |
+| Python 설치에서 멈춘 것 같음 | 1~3분 걸릴 수 있음. 5분이 넘으면 창을 닫고 2단계를 다시 실행 |
+| `irm` 또는 `iex`를 찾을 수 없다고 나옴 | 명령 프롬프트(cmd)에 붙여넣은 것. 1단계대로 **PowerShell**을 열어 다시 붙여넣기 |
+| `run_guide.bat` 실행 시 `Python 을 찾을 수 없습니다` | 2단계를 다시 실행 |
 | `연결된 안드로이드 기기가 없습니다` | MuMu Player가 켜져 있는지 확인 |
 | `adb.exe 를 찾을 수 없습니다` | MuMu를 기본 경로가 아닌 곳에 설치한 경우. `guide_auto.py` 위쪽 `ADB_CANDIDATES`에 경로 추가 |
 
-### (선택) 개발자용 실행 방법
+### (선택) 개발자용 설치·실행
+- **Git으로 받기**
+  ```bash
+  git clone https://github.com/l1539ym-cyber/windrunner-guide-auto.git windrunner
+  cd windrunner
+  pip install -r requirements.txt
+  ```
 - **VS Code**: `windrunner` 폴더를 열고 실행(F5) → `가이드 미션 자동화` 선택 (판정만 볼 때는 `(dry-run)`)
 - **터미널**
   ```bash
@@ -164,6 +159,7 @@ adbtool.py           수동 도구: python adbtool.py cap shot.png / tap X Y / b
 templates/           인식용 이미지 조각
   close_text/        닫기 문구 이미지 (여기 넣은 파일은 모두 닫기 문구로 인식)
 run_guide.bat        더블클릭 실행
+install.ps1          설치/업데이트 스크립트 (Python 설치, 바탕화면 windrunner 폴더에 내려받기)
 requirements.txt     opencv-python, numpy
 .vscode/             VS Code 실행 구성
 ```
