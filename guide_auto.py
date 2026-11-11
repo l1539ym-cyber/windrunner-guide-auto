@@ -125,9 +125,14 @@ def pick_serial():
     devs = [l.split()[0] for l in out.splitlines()[1:] if l.strip().endswith("device")]
     if not devs:
         raise SystemExit("연결된 안드로이드 기기가 없습니다. MuMu Player 를 실행하세요.")
+    # emulator-NNNN (로컬 연결)이 127.0.0.1:포트 (네트워크 연결)보다 잘 끊기지 않으므로 우선
+    devs.sort(key=lambda d: 0 if d.startswith("emulator-") else 1)
     for d in devs:                           # 게임이 화면에 떠 있는 기기 우선
-        focus = subprocess.run([ADB, "-s", d, "shell", "dumpsys window | grep mCurrentFocus"],
-                               capture_output=True, text=True, timeout=10).stdout
+        try:
+            focus = subprocess.run([ADB, "-s", d, "shell", "dumpsys window | grep mCurrentFocus"],
+                                   capture_output=True, text=True, timeout=10).stdout
+        except subprocess.SubprocessError:
+            continue
         if GAME_PACKAGE in focus:
             return d
     return devs[0]
@@ -136,9 +141,24 @@ def pick_serial():
 DEV = pick_serial()
 
 
+def _run_adb(args):
+    return subprocess.run([ADB, "-s", DEV, *args], capture_output=True, check=True, timeout=20).stdout
+
+
 def adb(*args, binary=False):
-    r = subprocess.run([ADB, "-s", DEV, *args], capture_output=True, check=True, timeout=20)
-    return r.stdout
+    """ADB 명령 실행. 실패하면 (연결이 끊긴 경우) 기기를 다시 찾아 연결한 뒤 한 번 더 시도."""
+    global DEV
+    try:
+        return _run_adb(args)
+    except subprocess.SubprocessError:
+        try:
+            new = pick_serial()
+        except SystemExit as e:
+            raise RuntimeError(f"ADB 연결 끊김 - {e}")
+        if new != DEV:
+            log(f"  ! ADB 연결이 끊겨 기기를 다시 연결함: {DEV} → {new}")
+            DEV = new
+        return _run_adb(args)
 
 
 def screencap():
@@ -523,7 +543,7 @@ class Bot:
                 try:
                     self.tick()
                 except subprocess.SubprocessError as e:
-                    log(f"ADB 오류: {e} - 재시도")
+                    log(f"ADB 오류 (MuMu 와 연결 안 됨, {INTERVAL_SEC}초 후 다시 시도): {e}")
                 except Exception as e:
                     log(f"오류: {e!r}")
                 time.sleep(INTERVAL_SEC)
