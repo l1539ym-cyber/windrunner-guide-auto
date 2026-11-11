@@ -1,0 +1,17 @@
+# 개인 화면 캡처 / 실행 로그 (닉네임, 채팅 등 개인 정보 포함)
+shots/
+logs/
+*.log
+
+# Python
+__pycache__/
+*.pyc
+
+# 이전 버전 스크립트와 그 전용 템플릿
+mission_claim.py
+guide_claim.py
+templates/guide_summon_text.png
+templates/summon_ticket_icon.png
+templates/menu_*.png
+templates/mission_close_x.png
+templates/title_*.png
