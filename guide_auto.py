@@ -71,7 +71,10 @@ HUD_OTHER_TH = 0.65      # 이벤트·랭킹·패스·챕터 (배경 따라 0.75
 HUD_MIN_OTHERS = 2       # 채팅 아이콘 외 UI 요소 중 최소 개수
 GUIDE_LABEL_TH = 0.60    # "[가이드" 주황 글자 (패널 0.89~1.00 / 그 외 ≤0.27)
 REPEAT_LABEL_TH = 0.45   # "[반복]" 하늘색 글자 (패널 0.49~1.00 / 그 외 ≤0.35)
-CLEAR_GREEN_PX = 200     # 클리어 판정: 진행도 "(30/30)" 초록 글자 픽셀 수 (클리어 ≈810 / 진행 중 0)
+CLEAR_GREEN_PX = 200     # 클리어 판정 ①: 진행도 "(30/30)" 초록 글자 픽셀 수 (클리어 ≈810 / 진행 중 0)
+BADGE_RED_PX = 600       # 클리어 판정 ②: 패널 오른쪽 위 빨간 "+N" 표시 (클리어 1083~1636 / 진행 중 0)
+BADGE_WHITE_PX = 30      #   + 그 안의 흰 글자 "+N" (클리어 60~204)
+                         # ② 는 진행도 숫자가 없는 미션(예: "모험 챕터 470-12 클리어")용
 SUMMON_WORD_TH = 0.75    # 문구 속 '소환' 흰 글자 (소환 0.86~1.00 / 그 외 ≤0.63)
 SUMMON_WORD_VMIN = 180
 SCREEN_TH = 0.90         # 소환 화면 / 소환 결과 화면 구성요소
@@ -95,6 +98,7 @@ HUD = {  # 기본 화면 UI 요소: 이름 → 탐색 영역 (x1, y1, x2, y2)
 }
 LABEL_ROI = (330, 1150, 520, 1200)     # 패널 라벨 "[가이드"/"[반복]" 탐색 영역
 PROGRESS_ROI = (340, 1200, 660, 1245)  # 패널 진행도 글자 줄
+BADGE_ROI = (598, 1136, 670, 1176)     # 패널 오른쪽 위 "+N" 표시
 SUMMON_WORD_OFF = (-7, 31, 253, 86)    # 라벨 기준 미션 문구 영역 ('소환' 글자 탐색)
 PANEL_TAP_OFF = (143, 37)              # 라벨 좌상단 → 패널 탭 위치
 GEM_COST_ROI = (570, 1125, 650, 1185)  # 소환 화면 30회 버튼 비용 아이콘
@@ -311,6 +315,16 @@ def is_base_screen(s):
     return hits["hud_chat"] and others >= HUD_MIN_OTHERS
 
 
+def badge_pixels(s):
+    """패널 오른쪽 위 빨간 '+N' 표시: (빨간 픽셀 수, 흰 글자 픽셀 수)"""
+    x1, y1, x2, y2 = BADGE_ROI
+    hsv = cv2.cvtColor(s[y1:y2, x1:x2], cv2.COLOR_BGR2HSV)
+    h, sat, v = hsv[..., 0], hsv[..., 1], hsv[..., 2]
+    red = ((h <= 8) | (h >= 172)) & (sat > 150) & (v > 180)
+    white = (v > 220) & (sat < 50)
+    return int(red.sum()), int(white.sum())
+
+
 def read_panel(s):
     """기본 화면 중앙 하단 미션 패널 판정"""
     g, (lx, ly) = mask_match(s, LABEL_ROI, "guide_label_orange", ORANGE)
@@ -323,7 +337,10 @@ def read_panel(s):
     x1, y1, x2, y2 = PROGRESS_ROI
     green = int((hue_mask(s[y1:y2, x1:x2], GREEN, 100, 150) > 0).sum())
     if green >= CLEAR_GREEN_PX:
-        return "GUIDE_CLEAR", {"tap": tap_xy, "green": green}
+        return "GUIDE_CLEAR", {"tap": tap_xy, "why": f"진행도 초록 {green}px"}
+    red, white = badge_pixels(s)
+    if red >= BADGE_RED_PX and white >= BADGE_WHITE_PX:    # 챕터 클리어 등 진행도 숫자가 없는 미션
+        return "GUIDE_CLEAR", {"tap": tap_xy, "why": f"+N 표시 빨강 {red}px"}
     tx1, ty1, tx2, ty2 = (lx + SUMMON_WORD_OFF[0], ly + SUMMON_WORD_OFF[1],
                           lx + SUMMON_WORD_OFF[2], ly + SUMMON_WORD_OFF[3])
     sw = cv2.minMaxLoc(cv2.matchTemplate(white_mask(s[ty1:ty2, tx1:tx2], SUMMON_WORD_VMIN),
@@ -671,7 +688,7 @@ class Bot:
                     self.exit_pending = True
                     self.escape_to_base()
         elif state == "GUIDE_CLEAR":
-            self.tap(info["tap"], f"가이드 클리어 → 보상 수령 (초록 {info['green']}px)")
+            self.tap(info["tap"], f"가이드 클리어 → 보상 수령 ({info['why']})")
             self.cnt["guide"] += 1
             self.summon_block_until = 0
         elif state == "GUIDE_SUMMON":
