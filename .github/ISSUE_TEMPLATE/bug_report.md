@@ -23,4 +23,5 @@ labels: bug
 `windrunner` 폴더의 `bug_report.bat` 을 더블클릭하면 바탕화면에 `windrunner_bug_report_…zip` 이 생깁니다.
 이 창에 끌어다 놓아 첨부해 주세요.
 
-> ⚠️ 이 게시판은 **공개**입니다. 캡처에 닉네임이 보이는 게 싫다면 이메일로 보내 주세요 (README 의 "버그 제보" 참고).
+> ⚠️ 이 게시판은 **공개**입니다. 캡처에 닉네임이 보이는 게 싫다면 이메일로 보내 주세요:
+> **windrunner-bug.harmonics426@slmail.me** (제목에 `[윈드러너 오류]`, ZIP 파일 첨부)

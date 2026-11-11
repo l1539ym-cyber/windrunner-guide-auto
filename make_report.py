@@ -108,7 +108,9 @@ def main():
     print("  " + out)
     print(f"  (로그 {len(logs)}개, 화면 캡처 {len(pngs) + (1 if shot_png else 0)}장)")
     print()
-    print("이 파일을 README 의 '버그 제보' 안내에 따라 보내 주세요.")
+    print("이 파일을 아래 중 한 곳으로 보내 주세요.")
+    print("  - 이메일: windrunner-bug.harmonics426@slmail.me  (제목에 [윈드러너 오류])")
+    print("  - GitHub: https://github.com/l1539ym-cyber/windrunner-guide-auto/issues/new?template=bug_report.md")
     print("※ 캡처에 게임 닉네임이 보일 수 있습니다. 공개 게시판에 올릴 때는 확인해 주세요.")
     try:
         subprocess.Popen(["explorer", "/select,", out])

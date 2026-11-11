@@ -177,6 +177,9 @@ python adbtool.py cap new_screen.png   # 현재 화면 캡처 → 글자 부분�
 ### 2. 보내기
 - **GitHub 이슈 (추천)**: [오류 제보 작성하기](https://github.com/l1539ym-cyber/windrunner-guide-auto/issues/new?template=bug_report.md)
   → 양식에 상황을 적고 ZIP 파일을 끌어다 놓아 첨부합니다. (GitHub 계정 필요, **공개 게시판**)
+- **이메일**: **windrunner-bug.harmonics426@slmail.me**
+  → 제목에 `[윈드러너 오류]`, 본문에 아래 "적어 주면 좋은 것"을 쓰고 ZIP 파일을 첨부해 주세요.
+  (GitHub 계정이 없거나, 캡처를 공개하고 싶지 않을 때)
 
 ### 적어 주면 좋은 것
 1. 언제 (날짜/시간, 대략이라도)
