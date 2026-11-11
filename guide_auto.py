@@ -42,6 +42,7 @@ SERIAL = ""                  # 비워두면 게임 실행 중인 기기 자동 �
 GAME_PACKAGE = "net.lightcon.windidle"
 
 INTERVAL_SEC = 5             # 화면 인식 주기
+ACTION_INTERVAL_SEC = 3      # 방금 탭(수령 등)을 했으면 다음 확인을 더 빨리 (연속 클리어 대응)
 AFTER_SUMMON_WAIT_SEC = 10   # 30회 뽑기 후 대기 (오동작 방지)
 SUMMON_COOLDOWN_SEC = 15     # 뽑기 후 패널이 클리어로 바뀔 때까지 소환 미션 무시
 NO_TICKET_COOLDOWN_SEC = 60  # 소환 화면 비용이 보석(=이미 뽑음)일 때 다시 들어가지 않는 시간
@@ -72,9 +73,10 @@ HUD_MIN_OTHERS = 2       # 채팅 아이콘 외 UI 요소 중 최소 개수
 GUIDE_LABEL_TH = 0.60    # "[가이드" 주황 글자 (패널 0.89~1.00 / 그 외 ≤0.27)
 REPEAT_LABEL_TH = 0.45   # "[반복]" 하늘색 글자 (패널 0.49~1.00 / 그 외 ≤0.35)
 CLEAR_GREEN_PX = 200     # 클리어 판정 ①: 진행도 "(30/30)" 초록 글자 픽셀 수 (클리어 ≈810 / 진행 중 0)
-BADGE_RED_PX = 600       # 클리어 판정 ②: 패널 오른쪽 위 빨간 "+N" 표시 (클리어 1083~1636 / 진행 중 0)
+BORDER_PINK_TH = 0.30    # 클리어 판정 ②: 패널 왼쪽·오른쪽·아래 테두리의 밝은 분홍 비율 합 (클리어 0.72~2.3 / 진행 중 0.00)
+                         #   진행도 숫자가 없는 미션(예: "모험 챕터 476-15 클리어")용. '+N' 표시가 없을 때도 있어 테두리로 판정
+BADGE_RED_PX = 600       # 클리어 판정 ③: 패널 오른쪽 위 빨간 "+N" 표시 (클리어 1083~1636 / 진행 중 0)
 BADGE_WHITE_PX = 30      #   + 그 안의 흰 글자 "+N" (클리어 60~204)
-                         # ② 는 진행도 숫자가 없는 미션(예: "모험 챕터 470-12 클리어")용
 SUMMON_WORD_TH = 0.75    # 문구 속 '소환' 흰 글자 (소환 0.86~1.00 / 그 외 ≤0.63)
 SUMMON_WORD_VMIN = 180
 SCREEN_TH = 0.90         # 소환 화면 / 소환 결과 화면 구성요소
@@ -99,6 +101,9 @@ HUD = {  # 기본 화면 UI 요소: 이름 → 탐색 영역 (x1, y1, x2, y2)
 LABEL_ROI = (330, 1150, 520, 1200)     # 패널 라벨 "[가이드"/"[반복]" 탐색 영역
 PROGRESS_ROI = (340, 1200, 660, 1245)  # 패널 진행도 글자 줄
 BADGE_ROI = (598, 1136, 670, 1176)     # 패널 오른쪽 위 "+N" 표시
+BORDER_ROIS = [(236, 1165, 250, 1235),  # 패널 왼쪽 테두리
+               (652, 1170, 666, 1235),  # 패널 오른쪽 테두리
+               (270, 1248, 620, 1260)]  # 패널 아래 테두리
 SUMMON_WORD_OFF = (-7, 31, 253, 86)    # 라벨 기준 미션 문구 영역 ('소환' 글자 탐색)
 PANEL_TAP_OFF = (143, 37)              # 라벨 좌상단 → 패널 탭 위치
 GEM_COST_ROI = (570, 1125, 650, 1185)  # 소환 화면 30회 버튼 비용 아이콘
@@ -341,6 +346,16 @@ def badge_pixels(s):
     return int(red.sum()), int(white.sum())
 
 
+def border_pink(s):
+    """클리어 패널의 밝은 분홍 테두리: 왼쪽·오른쪽·아래 테두리의 분홍 비율 합 (진행 중 패널은 0)"""
+    total = 0.0
+    for x1, y1, x2, y2 in BORDER_ROIS:
+        hsv = cv2.cvtColor(s[y1:y2, x1:x2], cv2.COLOR_BGR2HSV)
+        h, sat, v = hsv[..., 0], hsv[..., 1], hsv[..., 2]
+        total += float((((h >= 145) | (h <= 3)) & (sat > 70) & (v > 190)).mean())
+    return total
+
+
 def read_panel(s):
     """기본 화면 중앙 하단 미션 패널 판정"""
     g, (lx, ly) = mask_match(s, LABEL_ROI, "guide_label_orange", ORANGE)
@@ -354,8 +369,11 @@ def read_panel(s):
     green = int((hue_mask(s[y1:y2, x1:x2], GREEN, 100, 150) > 0).sum())
     if green >= CLEAR_GREEN_PX:
         return "GUIDE_CLEAR", {"tap": tap_xy, "why": f"진행도 초록 {green}px"}
+    border = border_pink(s)
+    if border >= BORDER_PINK_TH:                           # 챕터 클리어 등 진행도 숫자가 없는 미션
+        return "GUIDE_CLEAR", {"tap": tap_xy, "why": f"분홍 테두리 {border:.2f}"}
     red, white = badge_pixels(s)
-    if red >= BADGE_RED_PX and white >= BADGE_WHITE_PX:    # 챕터 클리어 등 진행도 숫자가 없는 미션
+    if red >= BADGE_RED_PX and white >= BADGE_WHITE_PX:
         return "GUIDE_CLEAR", {"tap": tap_xy, "why": f"+N 표시 빨강 {red}px"}
     tx1, ty1, tx2, ty2 = (lx + SUMMON_WORD_OFF[0], ly + SUMMON_WORD_OFF[1],
                           lx + SUMMON_WORD_OFF[2], ly + SUMMON_WORD_OFF[3])
@@ -453,6 +471,7 @@ class Bot:
     def __init__(self, dry):
         self.dry = dry
         self.cnt = {"guide": 0, "repeat": 0, "summon": 0, "retry": 0}
+        self.acted = False
         self.last_state = None
         self.window_warned = False
         self.exit_pending = False        # 스크립트가 뽑기를 했고 아직 기본 화면으로 못 돌아옴
@@ -473,6 +492,7 @@ class Bot:
     # 입력 -----------------------------------------------------------
     def tap(self, xy, why):
         log(f"  ▶ {why} : tap {xy}" + ("  [dry-run]" if self.dry else ""))
+        self.acted = True
         if not self.dry:
             tap(*xy)
 
@@ -739,8 +759,11 @@ class Bot:
         try:
             while True:
                 wait = None
+                self.acted = False
                 try:
                     self.tick()
+                    if self.acted:
+                        wait = ACTION_INTERVAL_SEC
                     self.on_ok()
                 except (AdbError, subprocess.SubprocessError) as e:
                     wait = self.on_adb_fail(e)
