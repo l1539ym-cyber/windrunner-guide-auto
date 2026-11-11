@@ -1,4 +1,5 @@
 @echo off
+rem NOTE: keep this file ASCII only. cmd.exe misreads UTF-8 (Korean) text in .bat files.
 chcp 65001 > nul
 cd /d "%~dp0"
 
@@ -9,7 +10,7 @@ if not defined PY (
     where py >nul 2>nul && set "PY=py"
 )
 if not defined PY (
-    echo Python 을 찾을 수 없습니다. README 의 설치 방법을 먼저 진행하세요.
+    echo [ERROR] Python not found. Please run the install command in README first.
     pause
     exit /b 1
 )
