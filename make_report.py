@@ -52,7 +52,13 @@ def desktop():
 
 
 def env_info():
+    try:
+        with open(os.path.join(BASE, ".version"), encoding="utf-8") as f:
+            ver = f.read().strip()[:7]
+    except OSError:
+        ver = "개발용 폴더(.git)" if os.path.isdir(os.path.join(BASE, ".git")) else "알 수 없음"
     lines = [f"생성 시각: {dt.datetime.now():%Y-%m-%d %H:%M:%S}",
+             f"프로그램 버전: {ver}",
              f"Windows: {platform.platform()}",
              f"Python: {sys.version.split()[0]}"]
     try:

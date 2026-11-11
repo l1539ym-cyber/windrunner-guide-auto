@@ -1,5 +1,7 @@
 @echo off
 rem NOTE: keep this file ASCII only. cmd.exe misreads UTF-8 (Korean) text in .bat files.
+rem Auto-update and auto-restart are handled by run.py (Python), not by this file,
+rem because cmd.exe reads .bat files from disk while running and an update could change this file.
 chcp 65001 > nul
 cd /d "%~dp0"
 
@@ -17,15 +19,5 @@ if not defined PY (
 
 "%PY%" -c "import cv2, numpy" 2>nul || "%PY%" -m pip install -r requirements.txt
 
-rem Auto-restart: if the script stops with an error (e.g. MuMu not running yet),
-rem wait 10 seconds and start it again. Ctrl+C (normal stop) does not restart.
-:run
-"%PY%" guide_auto.py %*
-if errorlevel 1 (
-    echo.
-    echo [AUTO-RESTART] guide_auto.py stopped with an error. Restarting in 10 seconds...
-    echo                To stop completely, close this window.
-    timeout /t 10 /nobreak > nul
-    goto run
-)
-pause
+rem The whole block below is parsed before it runs, so it is safe even if an update rewrites this file.
+("%PY%" run.py %* & pause & exit /b)

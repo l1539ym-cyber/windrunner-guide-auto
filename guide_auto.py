@@ -107,7 +107,23 @@ RESULT_CLOSE_TAP = (450, 1487)         # 소환 결과 '터치하여 닫기' (�
 ESC_SETTLE_SEC = 3.0                   # ESC 후 화면 전환 대기 (연속 ESC 방지)
 EXIT_MAX_STEPS = 20                    # 뽑기 후 기본 화면 복귀 시도 횟수 (1.5초 간격)
 UNKNOWN_FALLBACK = 5                   # 복귀 중 모르는 화면이 이만큼 연속되면 하단 중앙 한 번 탭
+
+# ---- 자동 업데이트 ----
+AUTO_UPDATE = True           # GitHub 에 새 버전이 올라오면 자동으로 받아서 다시 시작
+UPDATE_CHECK_HOURS = 1       # 실행 중 새 버전 확인 주기 (시간). 시작할 때는 항상 확인
 # =================================================================
+
+# 개인 설정: 같은 폴더에 user_settings.py 를 만들어 위 값을 덮어쓸 수 있다 (자동 업데이트해도 유지됨)
+#   예) user_settings.py 내용:  RETRY_ON_DEFEAT = False
+#                               UPDATE_CHECK_HOURS = 2
+try:
+    from user_settings import *  # noqa: F401,F403
+except ImportError:
+    pass
+
+import updater  # noqa: E402
+
+EXIT_UPDATE = 3              # 새 버전 발견 시 종료 코드 → run.py 가 업데이트 후 다시 실행
 
 BASE = os.path.dirname(os.path.abspath(__file__))
 TPL_DIR = os.path.join(BASE, "templates")
@@ -452,6 +468,7 @@ class Bot:
         self.stuck_img = None            # 멈춘 화면 감지용 작은 이미지
         self.stuck_since = 0
         self.stuck_escaped = False
+        self.next_update_check = time.time() + UPDATE_CHECK_HOURS * 3600   # 시작 때는 run.py 가 확인함
 
     # 입력 -----------------------------------------------------------
     def tap(self, xy, why):
@@ -639,6 +656,20 @@ class Bot:
             self.esc("멈춘 화면 닫기")
             self.stuck_escaped = True      # 같은 화면에서는 한 번만
 
+    def check_update(self, state):
+        """UPDATE_CHECK_HOURS 마다 새 버전 확인. 있으면 기본 화면일 때(뽑기 등 동작 중이 아닐 때) 종료 코드 3 으로
+        끝내서 run.py 가 업데이트 후 다시 실행하게 함"""
+        if not AUTO_UPDATE or self.dry or time.time() < self.next_update_check:
+            return
+        if state not in BASE_STATES or self.exit_pending:
+            return                    # 안전한 순간까지 미룸
+        self.next_update_check = time.time() + UPDATE_CHECK_HOURS * 3600
+        new = updater.update_available()
+        if new:
+            sha, msg, date = new
+            log(f"[업데이트] 새 버전 발견 ({sha[:7]} \"{msg}\", {date[:10]}) - 업데이트 후 다시 시작합니다")
+            raise SystemExit(EXIT_UPDATE)
+
     # 한 주기 ---------------------------------------------------------
     def tick(self):
         self.tick_n += 1
@@ -659,6 +690,7 @@ class Bot:
         s = self.look()
         state, info = read_screen(s)
         self.check_stuck(state, s)
+        self.check_update(state)
 
         if state != self.last_state and not (state == "DEFEAT" and self.last_state == "DEFEAT_LIMIT"):
             waiting = state in ("OTHER", "SUMMON_SCREEN", "SUMMON_RESULT", "CLOSE_TEXT", "BASE_NO_PANEL")

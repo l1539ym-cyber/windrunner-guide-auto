@@ -63,7 +63,9 @@ try {
     Step 2 "프로그램 내려받기 → $Dir"
     $zip = Join-Path $env:TEMP 'windrunner.zip'
     $tmp = Join-Path $env:TEMP 'windrunner_unzip'
-    Invoke-WebRequest "https://github.com/$Repo/archive/refs/heads/$Branch.zip" -OutFile $zip -UseBasicParsing
+    # 최신 커밋 번호를 먼저 알아내서 정확히 그 버전을 받음 (자동 업데이트가 버전을 비교할 때 사용)
+    $sha = (Invoke-RestMethod "https://api.github.com/repos/$Repo/commits/$Branch" -Headers @{ 'User-Agent' = 'windrunner-installer' }).sha
+    Invoke-WebRequest "https://github.com/$Repo/archive/$sha.zip" -OutFile $zip -UseBasicParsing
     if (Test-Path $tmp) { Remove-Item $tmp -Recurse -Force }
     Expand-Archive $zip -DestinationPath $tmp -Force
     $src = Get-ChildItem $tmp -Directory | Select-Object -First 1
@@ -71,7 +73,8 @@ try {
     New-Item -ItemType Directory -Force $Dir | Out-Null
     Copy-Item (Join-Path $src.FullName '*') $Dir -Recurse -Force
     Remove-Item $zip, $tmp -Recurse -Force -ErrorAction SilentlyContinue
-    if ($isUpdate) { Ok '새 버전으로 업데이트됨' } else { Ok '설치됨' }
+    [IO.File]::WriteAllText((Join-Path $Dir '.version'), $sha)
+    if ($isUpdate) { Ok "새 버전으로 업데이트됨 ($($sha.Substring(0,7)))" } else { Ok "설치됨 ($($sha.Substring(0,7)))" }
 
     # ---------------------------------------------------------------- 3. 부품
     Step 3 '필요한 부품 설치 (opencv-python, numpy)'
@@ -84,6 +87,7 @@ try {
     # ---------------------------------------------------------------- 4. 끝
     Step 4 '설치 완료'
     Write-Host "  바탕화면 windrunner 폴더의 run_guide.bat 을 더블클릭하면 실행됩니다." -ForegroundColor Yellow
+    Write-Host "  새 버전이 나오면 프로그램이 알아서 업데이트합니다. (다시 설치할 필요 없음)" -ForegroundColor Yellow
     if (-not $env:WINDRUNNER_NO_EXPLORER) { explorer $Dir }
 }
 catch {
