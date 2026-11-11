@@ -90,7 +90,11 @@ def apply_update(sha, log=print):
     return True
 
 
-def check_and_update(log=print):
+def _say(msg):
+    print(msg, flush=True)
+
+
+def check_and_update(log=_say):
     """시작할 때 호출: 새 버전이 있으면 업데이트. 업데이트했으면 True"""
     if is_dev_folder():
         log("[업데이트] 개발용 폴더(.git 있음) - 자동 업데이트 안 함")

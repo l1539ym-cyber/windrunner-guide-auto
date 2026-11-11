@@ -51,8 +51,15 @@ ADB로 화면을 캡처한 뒤 OpenCV 템플릿 매칭과 색상 판정으로 �
 
 > MuMu 창은 **최소화하지 마세요.** 최소화하면 자동으로 일시정지됩니다. 다른 창 뒤에 두는 것은 괜찮습니다.
 
-### 새 버전으로 업데이트
-**2단계의 한 줄을 그대로 다시 붙여넣으면** 됩니다. 프로그램 파일만 새 버전으로 바뀌고, 로그는 남아 있습니다.
+### 새 버전으로 업데이트 → **자동입니다**
+버그가 고쳐진 새 버전이 올라오면 **프로그램이 알아서 받아서 적용합니다.** 따로 할 일이 없습니다.
+- `run_guide.bat`을 실행할 때마다 먼저 새 버전이 있는지 확인하고, 있으면 업데이트한 뒤 시작합니다.
+- 켜 둔 상태에서도 **1시간마다** 확인합니다. 새 버전이 있으면 뽑기 같은 동작 중이 아닌 기본 화면일 때
+  잠깐 멈추고 업데이트한 뒤 **자동으로 다시 시작**합니다. 검은 창에 `[업데이트] 새 버전 발견 ...`이 표시됩니다.
+- 로그(`logs/`)와 개인 설정(`user_settings.py`)은 업데이트해도 그대로 남습니다.
+
+> **2026-11-11 이전에 설치하신 분**은 자동 업데이트 기능이 없는 버전입니다.
+> **2단계의 한 줄을 한 번만 다시 붙여넣어** 주세요. 그 뒤로는 자동으로 업데이트됩니다.
 
 ### 잘 안 될 때
 | 증상 | 해결 |
@@ -137,6 +144,20 @@ ADB로 화면을 캡처한 뒤 OpenCV 템플릿 매칭과 색상 판정으로 �
 python adbtool.py cap new_screen.png   # 현재 화면 캡처 → 글자 부분만 잘라 templates/close_text/ 에 저장
 ```
 
+### 자동 업데이트
+```
+run_guide.bat → run.py (실행 관리자)
+  ├ 시작 시: updater.py 가 GitHub 최신 커밋과 .version 비교 → 다르면 그 커밋 ZIP 을 받아 프로그램 파일 덮어쓰기
+  └ guide_auto.py 실행
+       ├ 1시간마다 새 버전 확인 → 있으면 '기본 화면일 때' 종료 코드 3 으로 종료
+       │    → run.py 가 업데이트 후 즉시 다시 실행
+       ├ 오류로 종료 → 10초 후 다시 실행
+       └ Ctrl+C → 끝
+```
+- Git이 없어도 됩니다 (ZIP으로 받음). `logs/`, `user_settings.py`, `.version`은 덮어쓰지 않습니다.
+- 실행 중인 bat 파일이 업데이트로 바뀌어도 깨지지 않도록, 재시작과 업데이트는 Python(`run.py`)이 맡습니다.
+- `.git` 폴더가 있는 개발용 폴더(직접 `git clone`한 경우)에서는 자동 업데이트하지 않습니다. `git pull`로 직접 받으세요.
+
 ### 오류 자동 복구
 오류가 나도 사람이 손대지 않게, 스크립트가 스스로 원인을 확인하고 단계적으로 복구한다.
 복구할 때마다 로그에 `[자동복구]`로 남기고, 그 순간 화면을 `logs/autoheal_*.png`로 저장한다.
@@ -206,7 +227,13 @@ python adbtool.py cap new_screen.png   # 현재 화면 캡처 → 글자 부분�
 ---
 
 ## 설정값
-`guide_auto.py` 상단의 `설정` 블록에서 바꾼다.
+`guide_auto.py` 상단의 `설정` 블록에 있다. 직접 바꾸고 싶으면 `guide_auto.py`를 고치지 말고,
+같은 폴더에 **`user_settings.py`** 파일을 만들어 바꿀 값만 적는다. 이렇게 하면 자동 업데이트를 해도 유지된다.
+```python
+# user_settings.py 예시
+RETRY_ON_DEFEAT = False     # 패배해도 재도전 안 누르기
+UPDATE_CHECK_HOURS = 2      # 업데이트 확인을 2시간마다
+```
 
 | 이름 | 기본값 | 의미 |
 |---|---|---|
@@ -217,6 +244,8 @@ python adbtool.py cap new_screen.png   # 현재 화면 캡처 → 글자 부분�
 | `RESUME_SETTLE_SEC` | 3 | 최소화 해제 후 재개까지 대기(초) |
 | `RETRY_ON_DEFEAT` | True | 패배 시 '재도전' 누르기 |
 | `RETRY_LIMIT` / `RETRY_WINDOW_SEC` | 3 / 600 | 10분 안에 3번 패배하면 재도전 중단 |
+| `AUTO_UPDATE` | True | 새 버전 자동 업데이트 |
+| `UPDATE_CHECK_HOURS` | 1 | 실행 중 새 버전 확인 주기(시간) |
 | `AUTO_RELAUNCH_GAME` | True | 게임이 꺼지면 다시 실행 |
 | `STUCK_SEC` | 180 | 같은 화면이 이 시간(초) 넘게 그대로면 ESC 한 번 |
 | `ADB_RESTART_AFTER` / `ADB_BACKOFF_AFTER` | 3 / 6 | ADB 연속 실패 시 서버 재시작 / 천천히 재시도 기준 |
@@ -229,7 +258,9 @@ adbtool.py           수동 도구: python adbtool.py cap shot.png / tap X Y / b
 templates/           인식용 이미지 조각
   close_text/        닫기 문구 이미지 (여기 넣은 파일은 모두 닫기 문구로 인식)
   hud/               기본 화면 판정용 UI 요소
-run_guide.bat        더블클릭 실행
+run_guide.bat        더블클릭 실행 → run.py
+run.py               실행 관리자 (시작 시 업데이트, 오류/업데이트 시 자동 재시작)
+updater.py           자동 업데이트 (GitHub 최신 버전 확인, ZIP 으로 파일 교체)
 bug_report.bat       버그 제보 파일(ZIP) 만들기 → make_report.py
 .github/             GitHub 이슈 오류 제보 양식
 install.ps1          설치/업데이트 스크립트 (Python 설치, 바탕화면 windrunner 폴더에 내려받기)
