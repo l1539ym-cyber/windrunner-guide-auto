@@ -15,3 +15,6 @@ templates/summon_ticket_icon.png
 templates/menu_*.png
 templates/mission_close_x.png
 templates/title_*.png
+templates/guide_label.png
+templates/guide_label_done.png
+templates/repeat_label.png
