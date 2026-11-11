@@ -50,13 +50,25 @@ RETRY_ON_DEFEAT = True       # 패배 시 '재도전' 누르기
 RETRY_LIMIT = 3              # RETRY_WINDOW_SEC 안에 이만큼 패배하면 더 누르지 않음 (게임이 이전 스테이지로 자동 복귀)
 RETRY_WINDOW_SEC = 600
 
+# ---- 자동 복구 (오류가 나면 스스로 해결) ----
+ADB_RESTART_AFTER = 3        # ADB 연속 실패 n회 → ADB 서버 재시작
+ADB_BACKOFF_AFTER = 6        # ADB 연속 실패 n회 이상 → 천천히 재시도 (MuMu 꺼짐 등)
+ADB_BACKOFF_SEC = 30
+GAME_CHECK_EVERY = 6         # n주기(약 30초)마다 게임이 화면 맨 앞에 있는지 확인
+AUTO_RELAUNCH_GAME = True    # 게임이 꺼졌거나 다른 앱이 앞에 있으면 게임 다시 실행
+RELAUNCH_WAIT_SEC = 40       # 게임 실행 후 로딩 대기
+STUCK_SEC = 180              # 기본 화면이 아닌 같은 화면이 이 시간 넘게 그대로면 ESC 한 번
+EXIT_FAIL_GIVEUP = 3         # 뽑기 후 복귀 실패가 n번 연속이면 복귀 시도 중단
+ERROR_RESET_AFTER = 3        # 알 수 없는 오류 n회 연속 → 내부 상태 초기화
+
 KEY_ESC = 111                # Android KEYCODE_ESCAPE (소환 화면 닫기)
 MUMU_EXE_NAMES = {"mumunxdevice.exe", "mumuplayer.exe", "nemuplayer.exe"}  # MuMu 화면 창 프로세스
 RESUME_SETTLE_SEC = 3        # 최소화 해제 후 화면이 정상 갱신될 때까지 대기
 
 # ---- 판정 기준값 (괄호: 실측 점수 범위) ----
-HUD_TH = 0.80            # 기본 화면 UI 요소 (기본 화면 0.88~1.00 / 다른 화면 채팅 아이콘 ≤0.52)
-HUD_MIN_OTHERS = 2       # 채팅 아이콘 외 UI 요소(이벤트·랭킹·패스·챕터) 중 최소 개수
+HUD_TH = 0.80            # 채팅 아이콘 (기본 화면 0.96~1.00 / 메뉴·미션창·채팅창 등 ≤0.52)
+HUD_OTHER_TH = 0.65      # 이벤트·랭킹·패스·챕터 (배경 따라 0.75~1.00 / 소환 화면 등 ≤0.30)
+HUD_MIN_OTHERS = 2       # 채팅 아이콘 외 UI 요소 중 최소 개수
 GUIDE_LABEL_TH = 0.60    # "[가이드" 주황 글자 (패널 0.89~1.00 / 그 외 ≤0.27)
 REPEAT_LABEL_TH = 0.45   # "[반복]" 하늘색 글자 (패널 0.49~1.00 / 그 외 ≤0.35)
 CLEAR_GREEN_PX = 200     # 클리어 판정: 진행도 "(30/30)" 초록 글자 픽셀 수 (클리어 ≈810 / 진행 중 0)
@@ -145,27 +157,56 @@ def _run_adb(args):
     return subprocess.run([ADB, "-s", DEV, *args], capture_output=True, check=True, timeout=20).stdout
 
 
+class AdbError(RuntimeError):
+    """MuMu 와 ADB 통신이 안 됨"""
+
+
+def reconnect():
+    """기기를 다시 찾아 연결"""
+    global DEV
+    try:
+        new = pick_serial()
+    except SystemExit as e:
+        raise AdbError(str(e))
+    if new != DEV:
+        log(f"  [자동복구] ADB 기기 다시 연결: {DEV} → {new}")
+        DEV = new
+
+
+def restart_adb_server():
+    """ADB 서버를 껐다 켜고 기기 다시 연결"""
+    subprocess.run([ADB, "kill-server"], capture_output=True, timeout=20)
+    time.sleep(2)
+    subprocess.run([ADB, "start-server"], capture_output=True, timeout=30)
+    reconnect()
+
+
 def adb(*args, binary=False):
     """ADB 명령 실행. 실패하면 (연결이 끊긴 경우) 기기를 다시 찾아 연결한 뒤 한 번 더 시도."""
-    global DEV
     try:
         return _run_adb(args)
     except subprocess.SubprocessError:
+        reconnect()
         try:
-            new = pick_serial()
-        except SystemExit as e:
-            raise RuntimeError(f"ADB 연결 끊김 - {e}")
-        if new != DEV:
-            log(f"  ! ADB 연결이 끊겨 기기를 다시 연결함: {DEV} → {new}")
-            DEV = new
-        return _run_adb(args)
+            return _run_adb(args)
+        except subprocess.SubprocessError as e:
+            raise AdbError(f"{' '.join(args[:3])} 실패 ({DEV}): {getattr(e, 'stderr', b'') or e}")
+
+
+def game_in_front():
+    out = adb("shell", "dumpsys window | grep mCurrentFocus").decode("utf-8", "ignore")
+    return GAME_PACKAGE in out
+
+
+def launch_game():
+    adb("shell", "monkey", "-p", GAME_PACKAGE, "-c", "android.intent.category.LAUNCHER", "1")
 
 
 def screencap():
     img = cv2.imdecode(np.frombuffer(adb("exec-out", "screencap", "-p", binary=True), np.uint8),
                        cv2.IMREAD_COLOR)
     if img is None:
-        raise RuntimeError("화면 캡처 실패")
+        raise AdbError("화면 캡처 실패 (빈 이미지)")
     return img
 
 
@@ -264,7 +305,8 @@ def find_close_text(s):
 # 화면 판정 ---------------------------------------------------------
 def is_base_screen(s):
     """기본(전투) 화면: 채팅 아이콘 + 이벤트/랭킹/패스/챕터 중 2개 이상"""
-    hits = {k: match_in(s, roi, "hud/" + k)[0] >= HUD_TH for k, roi in HUD.items()}
+    hits = {k: match_in(s, roi, "hud/" + k)[0] >= (HUD_TH if k == "hud_chat" else HUD_OTHER_TH)
+            for k, roi in HUD.items()}
     others = sum(v for k, v in hits.items() if k != "hud_chat")
     return hits["hud_chat"] and others >= HUD_MIN_OTHERS
 
@@ -384,6 +426,15 @@ class Bot:
         self.summon_block_until = 0      # 이 시각까지 가이드 소환 미션 무시
         self.defeats = []                # 최근 패배 시각들
         self.other_since = None          # 기본 화면이 아닌 상태가 시작된 시각
+        # 자동 복구용
+        self.tick_n = 0
+        self.adb_fail = 0                # ADB 연속 실패 횟수
+        self.err_fail = 0                # 알 수 없는 오류 연속 횟수
+        self.not_front = 0               # 게임이 맨 앞이 아닌 것을 연속으로 본 횟수
+        self.exit_fail = 0               # 뽑기 후 복귀 연속 실패 횟수
+        self.stuck_img = None            # 멈춘 화면 감지용 작은 이미지
+        self.stuck_since = 0
+        self.stuck_escaped = False
 
     # 입력 -----------------------------------------------------------
     def tap(self, xy, why):
@@ -487,12 +538,110 @@ class Bot:
         time.sleep(2)
 
     # 한 주기 ---------------------------------------------------------
+    # 자동 복구 ---------------------------------------------------------
+    def heal(self, what, shot=None):
+        """복구 동작 기록 (+ 그 순간 화면 저장)"""
+        msg = f"  [자동복구] {what}"
+        if shot is not None:
+            msg += " - 화면 저장: " + save_shot(shot, "autoheal")
+        log(msg)
+
+    def on_ok(self):
+        if self.adb_fail:
+            log(f"  [자동복구] ADB 연결 회복 (연속 실패 {self.adb_fail}회 후)")
+        self.adb_fail = 0
+        self.err_fail = 0
+
+    def on_adb_fail(self, e):
+        """ADB 오류: 재연결 → ADB 서버 재시작 → MuMu 상태 확인 + 천천히 재시도"""
+        self.adb_fail += 1
+        log(f"ADB 오류 {self.adb_fail}회 연속: {e}")
+        if self.adb_fail == ADB_RESTART_AFTER:
+            self.heal("ADB 서버 재시작")
+            try:
+                restart_adb_server()
+            except Exception as e2:
+                log(f"  ADB 서버 재시작 실패: {e2}")
+        if self.adb_fail >= ADB_BACKOFF_AFTER:
+            if mumu_minimized() is None:
+                log(f"  ! MuMu Player 창이 보이지 않음 - MuMu 를 켜 주세요. {ADB_BACKOFF_SEC}초마다 다시 확인")
+            else:
+                log(f"  ! MuMu 는 켜져 있지만 연결 안 됨 - {ADB_BACKOFF_SEC}초마다 다시 시도")
+            if self.adb_fail % ADB_BACKOFF_AFTER == 0:   # 가끔씩 서버 재시작도 다시 시도
+                try:
+                    restart_adb_server()
+                except Exception:
+                    pass
+            return ADB_BACKOFF_SEC
+        return None
+
+    def on_error(self, e):
+        """알 수 없는 오류: n회 연속이면 화면 저장 + 내부 상태 초기화"""
+        self.err_fail += 1
+        log(f"오류 {self.err_fail}회 연속: {e!r}")
+        if self.err_fail >= ERROR_RESET_AFTER:
+            shot = None
+            try:
+                shot = screencap()
+            except Exception:
+                pass
+            self.heal("오류가 계속되어 내부 상태 초기화", shot)
+            self.exit_pending = False
+            self.summon_block_until = 0
+            self.last_state = None
+            self.err_fail = 0
+
+    def check_game_front(self):
+        """게임이 꺼졌거나 다른 앱이 앞에 있으면 (2번 연속 확인 후) 게임 다시 실행. 실행했으면 True"""
+        if game_in_front():
+            self.not_front = 0
+            return False
+        self.not_front += 1
+        log(f"  ! 게임이 화면 맨 앞에 없음 ({self.not_front}회)")
+        if self.not_front >= 2 and AUTO_RELAUNCH_GAME and not self.dry:
+            self.heal("게임 다시 실행", screencap())
+            launch_game()
+            log(f"  게임 로딩 {RELAUNCH_WAIT_SEC}초 대기")
+            time.sleep(RELAUNCH_WAIT_SEC)
+            self.not_front = 0
+            self.last_state = None
+            return True
+        return False
+
+    def check_stuck(self, state, s):
+        """기본 화면이 아닌 같은 화면이 STUCK_SEC 넘게 그대로면 ESC 한 번 (멈춘 팝업 닫기)"""
+        if state != "OTHER":
+            self.stuck_img, self.stuck_escaped = None, False
+            return
+        small = cv2.resize(cv2.cvtColor(s, cv2.COLOR_BGR2GRAY), (45, 80)).astype(np.int16)
+        if self.stuck_img is None or np.abs(small - self.stuck_img).mean() > 6:
+            self.stuck_img, self.stuck_since, self.stuck_escaped = small, time.time(), False
+            return
+        if not self.stuck_escaped and time.time() - self.stuck_since > STUCK_SEC:
+            self.heal(f"같은 화면이 {STUCK_SEC // 60}분 넘게 멈춰 있음 → ESC", s)
+            self.esc("멈춘 화면 닫기")
+            self.stuck_escaped = True      # 같은 화면에서는 한 번만
+
+    # 한 주기 ---------------------------------------------------------
     def tick(self):
+        self.tick_n += 1
+        if self.tick_n % GAME_CHECK_EVERY == 0:
+            if self.check_game_front():
+                return
         if self.exit_pending:          # 지난번 뽑기 후 복귀를 못 끝냈으면 그것부터
-            if not self.escape_to_base():
+            if self.escape_to_base():
+                self.exit_fail = 0
+            else:
+                self.exit_fail += 1
+                if self.exit_fail >= EXIT_FAIL_GIVEUP:
+                    self.heal(f"뽑기 후 복귀가 {self.exit_fail}번 연속 실패 - 복귀 시도 중단 (멈춘 화면 처리에 맡김)",
+                              self.look())
+                    self.exit_pending = False
+                    self.exit_fail = 0
                 return
         s = self.look()
         state, info = read_screen(s)
+        self.check_stuck(state, s)
 
         if state != self.last_state and not (state == "DEFEAT" and self.last_state == "DEFEAT_LIMIT"):
             waiting = state in ("OTHER", "SUMMON_SCREEN", "SUMMON_RESULT", "CLOSE_TEXT", "BASE_NO_PANEL")
@@ -540,13 +689,15 @@ class Bot:
         log(f"시작 - 기기 {DEV}, {INTERVAL_SEC}초 주기" + (" (dry-run)" if self.dry else ""))
         try:
             while True:
+                wait = None
                 try:
                     self.tick()
-                except subprocess.SubprocessError as e:
-                    log(f"ADB 오류 (MuMu 와 연결 안 됨, {INTERVAL_SEC}초 후 다시 시도): {e}")
+                    self.on_ok()
+                except (AdbError, subprocess.SubprocessError) as e:
+                    wait = self.on_adb_fail(e)
                 except Exception as e:
-                    log(f"오류: {e!r}")
-                time.sleep(INTERVAL_SEC)
+                    self.on_error(e)
+                time.sleep(wait or INTERVAL_SEC)
         except KeyboardInterrupt:
             log(f"종료 - 가이드 {self.cnt['guide']} / 반복 {self.cnt['repeat']} / "
                 f"30회 뽑기 {self.cnt['summon']} / 재도전 {self.cnt['retry']}")
