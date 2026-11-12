@@ -87,7 +87,9 @@ BADGE_RED_PX = 600       # 클리어 판정 ③: 패널 오른쪽 위 빨간 "+N
 BADGE_WHITE_PX = 30      #   + 그 안의 흰 글자 "+N" (클리어 60~204)
 SUMMON_WORD_TH = 0.75    # 문구 속 '소환' 흰 글자 (소환 0.86~1.00 / 그 외 ≤0.63)
 SUMMON_WORD_VMIN = 180
-SCREEN_TH = 0.90         # 소환 화면 / 소환 결과 화면 구성요소
+SCREEN_TH = 0.90         # 소환 결과 화면 '터치하여 닫기'
+SUMMON_TAB_TH = 0.75     # 소환 화면 아래 '캐릭터' 탭 글자 (캐릭터 탭 선택 0.93 / 소환수·탈것 탭 선택 0.88 / 그 외 ≤0.53)
+SUMMON_BTN_TH = 0.80     # 소환 화면 '30회' 버튼 (0.89~0.94, 반짝임 효과로 흔들림 / 그 외 ≤0.40)
 GEM_COST_TH = 0.85       # 소환 화면 30회 비용이 보석 아이콘인지 (보석 1.00 / 뽑기권 ≤0.60)
 TICKET_COST_TH = 0.85    # 소환 화면 30회 비용이 뽑기권인지 (해당 종류 0.93~1.00 / 다른 종류 뽑기권 ≤0.82 / 보석 ≤0.60 / 빈 영역 ≤0.45)
 DEFEAT_TH = 0.80         # 'Defeat' 제목, '재도전' 버튼 (패배 0.94~1.00 / 그 외 ≤0.43)
@@ -125,6 +127,8 @@ COST_MARGIN = 12                       # 비용 템플릿 탐색 여유 (픽셀)
 COST_CHECKS = 3                        # 비용 판정 확인 횟수 (뽑기 전 연속으로 모두 '뽑기권'이어야 함)
 SUMMON_ENTER_TIMEOUT = 12              # 패널 탭 후 소환 화면이 뜰 때까지 기다리는 최대 시간(초)
 SUMMON_30_TAP = (687, 1130)            # 소환 화면 '30회' 버튼
+SUMMON_TAB_ROI = (235, 1375, 380, 1485)   # 소환 화면 아래 '캐릭터' 탭 글자 (캐릭터·소환수·탈것 화면 모두 같은 자리)
+SUMMON_BTN_ROI = (580, 1048, 800, 1170)   # 소환 화면 '30회' 버튼 (SUMMON_30_TAP 이 이 안에 있어야 함)
 RESULT_CLOSE_TAP = (450, 1487)         # 소환 결과 '터치하여 닫기' (결과 화면은 ESC 무반응)
 ESC_SETTLE_SEC = 3.0                   # ESC 후 화면 전환 대기 (연속 ESC 방지)
 EXIT_MAX_STEPS = 20                    # 뽑기 후 기본 화면 복귀 시도 횟수 (1.5초 간격)
@@ -623,6 +627,13 @@ def read_panel(s):
     return "GUIDE_PROGRESS", {}
 
 
+def is_summon_screen(s):
+    """캐릭터 / 소환수 / 탈것 소환 화면 (30회 버튼 + 아래 탭 줄의 '캐릭터' 글자).
+    '캐릭터' 글자는 캐릭터 탭이 선택돼 있을 때 더 밝아서, 기준을 소환수·탈것 탭 점수(0.88)보다 낮게 둔다."""
+    return (match_in(s, SUMMON_TAB_ROI, "summon_char_tab")[0] >= SUMMON_TAB_TH
+            and match_in(s, SUMMON_BTN_ROI, "summon_30_btn")[0] >= SUMMON_BTN_TH)
+
+
 def read_screen(s):
     """현재 화면 상태 판별 → (state, info)"""
     # 1) 패배 (기본 화면 위에 겹쳐 뜸)
@@ -634,7 +645,7 @@ def read_screen(s):
     # 2) 소환 결과 / 소환 화면
     if match(s, "summon_result_close")[0] >= SCREEN_TH:
         return "SUMMON_RESULT", {}
-    if match(s, "summon_char_tab")[0] >= SCREEN_TH and match(s, "summon_30_btn")[0] >= SCREEN_TH:
+    if is_summon_screen(s):
         cost, why = summon_cost(s)
         return "SUMMON_SCREEN", {"cost": cost, "cost_why": why}
     # 3) 기본 화면 → 패널 판정
