@@ -273,6 +273,17 @@ def _is_mumu_serial(d):
     return d.startswith("emulator-") or d.startswith("127.0.0.1:") or d.startswith("localhost:")
 
 
+def _boot_id(d):
+    """기기 부팅마다 바뀌는 고유값. 같은 MuMu 가 emulator-5554 와 127.0.0.1:포트 로 여러 번 잡혀도 같음.
+    읽지 못하면 시리얼 그대로 (= 다른 기기로 취급, 안전한 쪽)"""
+    try:
+        out = subprocess.run([ADB, "-s", d, "shell", "cat /proc/sys/kernel/random/boot_id"],
+                             capture_output=True, text=True, timeout=10).stdout.strip()
+    except subprocess.SubprocessError:
+        out = ""
+    return out or d
+
+
 def pick_serial():
     """시작할 때 한 번만 호출: 대상 기기 결정"""
     if SERIAL:
@@ -295,6 +306,10 @@ def pick_serial():
             continue
         if GAME_PACKAGE in focus:
             return d
+    uniq = {}                                # 같은 기기의 여러 연결은 하나로 (emulator- 가 앞이라 그쪽이 남음)
+    for d in devs:
+        uniq.setdefault(_boot_id(d), d)
+    devs = list(uniq.values())
     mumu = [d for d in devs if _is_mumu_serial(d)]
     if len(devs) == 1 or len(mumu) == 1:     # 후보가 하나뿐일 때만 (게임은 나중에 자동 실행됨)
         return devs[0] if len(devs) == 1 else mumu[0]
