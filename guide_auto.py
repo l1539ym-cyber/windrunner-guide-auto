@@ -89,7 +89,7 @@ SUMMON_WORD_TH = 0.75    # 문구 속 '소환' 흰 글자 (소환 0.86~1.00 / �
 SUMMON_WORD_VMIN = 180
 SCREEN_TH = 0.90         # 소환 화면 / 소환 결과 화면 구성요소
 GEM_COST_TH = 0.85       # 소환 화면 30회 비용이 보석 아이콘인지 (보석 1.00 / 뽑기권 ≤0.60)
-TICKET_COST_TH = 0.85    # 소환 화면 30회 비용이 뽑기권인지 (templates/summon_cost_ticket.png 와 비교)
+TICKET_COST_TH = 0.85    # 소환 화면 30회 비용이 뽑기권인지 (해당 종류 0.93~1.00 / 다른 종류 뽑기권 ≤0.82 / 보석 ≤0.60 / 빈 영역 ≤0.45)
 DEFEAT_TH = 0.80         # 'Defeat' 제목, '재도전' 버튼 (패배 0.94~1.00 / 그 외 ≤0.43)
 CLOSE_TEXT_TH = 0.80     # '터치하여 닫기' 등 닫기 문구 (실제 0.90~1.00 / 그 외 ≤0.65)
 CLOSE_TEXT_SCALES = tuple(round(0.70 + 0.05 * i, 2) for i in range(17))  # 0.70~1.50배
@@ -116,8 +116,11 @@ BORDER_ROIS = [(236, 1165, 250, 1235),  # 패널 왼쪽 테두리
 SUMMON_WORD_OFF = (-7, 31, 253, 86)    # 라벨 기준 미션 문구 영역 ('소환' 글자 탐색)
 PANEL_TAP_OFF = (143, 37)              # 라벨 좌상단 → 패널 탭 위치
 GEM_COST_ROI = (570, 1125, 650, 1185)  # 소환 화면 30회 버튼 비용 아이콘
-TICKET_TPL = "summon_cost_ticket"      # 뽑기권 비용 템플릿 (= 뽑기권일 때 GEM_COST_ROI 영역 그대로).
-                                       #   없으면 뽑기를 하지 않음. 만들기: python guide_auto.py --save-ticket-template
+TICKET_TPLS = {                        # 30회 비용 뽑기권 아이콘 (아이콘만 자름: 배경이 섞이면 보석·빈 영역도 높게 나옴)
+    "캐릭터": "summon_cost_ticket_char",   # 빨강
+    "소환수": "summon_cost_ticket_pet",    # 초록
+    "탈것": "summon_cost_ticket_mount",    # 금색
+}
 COST_MARGIN = 12                       # 비용 템플릿 탐색 여유 (픽셀)
 COST_CHECKS = 3                        # 비용 판정 확인 횟수 (뽑기 전 연속으로 모두 '뽑기권'이어야 함)
 SUMMON_ENTER_TIMEOUT = 12              # 패널 탭 후 소환 화면이 뜰 때까지 기다리는 최대 시간(초)
@@ -401,10 +404,6 @@ def key(code):
 _tpl = {}
 
 
-def has_template(name):
-    return name in _tpl or os.path.exists(os.path.join(TPL_DIR, name + ".png"))
-
-
 def T(name):
     if name not in _tpl:
         img = cv2.imdecode(np.fromfile(os.path.join(TPL_DIR, name + ".png"), np.uint8), cv2.IMREAD_COLOR)
@@ -434,17 +433,15 @@ def _grow(roi, m):
 
 def summon_cost(s):
     """소환 화면 30회 버튼 비용 → ("ticket" | "gem" | "unknown", 설명)
-    뽑기권은 '보석이 아님'이 아니라 뽑기권 템플릿과 직접 일치할 때만 인정한다.
-    (비용 영역이 가려졌거나 아이콘이 바뀐 경우 = unknown → 뽑지 않음)"""
-    gem = match_in(s, _grow(GEM_COST_ROI, COST_MARGIN), "summon_cost_gem")[0]
+    뽑기권은 '보석이 아님'이 아니라 캐릭터/소환수/탈것 뽑기권 아이콘 중 하나와 직접 일치할 때만 인정한다.
+    (비용 영역이 가려졌거나 아이콘이 아직 안 그려진 경우 = unknown → 뽑지 않음)"""
+    roi = _grow(GEM_COST_ROI, COST_MARGIN)
+    gem = match_in(s, roi, "summon_cost_gem")[0]
     if gem >= GEM_COST_TH:
         return "gem", f"보석 {gem:.2f}"
-    if not has_template(TICKET_TPL):
-        return "unknown", f"뽑기권 템플릿 없음 (templates/{TICKET_TPL}.png)"
-    ticket = match_in(s, _grow(GEM_COST_ROI, COST_MARGIN), TICKET_TPL)[0]
-    if ticket >= TICKET_COST_TH:
-        return "ticket", f"뽑기권 {ticket:.2f} / 보석 {gem:.2f}"
-    return "unknown", f"뽑기권 {ticket:.2f} / 보석 {gem:.2f}"
+    ticket, kind = max((match_in(s, roi, tpl)[0], k) for k, tpl in TICKET_TPLS.items())
+    why = f"뽑기권({kind}) {ticket:.2f} / 보석 {gem:.2f}"
+    return ("ticket" if ticket >= TICKET_COST_TH else "unknown"), why
 
 
 def white_mask(img, vmin=200):
@@ -696,7 +693,6 @@ class Bot:
         self.stuck_escaped = False
         self.next_update_check = time.time() + UPDATE_CHECK_HOURS * 3600   # 시작 때는 run.py 가 확인함
         self.bad_res = None              # 지원하지 않는 해상도를 본 경우 그 크기 (안내 한 번만)
-        self.ticket_warned = False
 
     # 입력 -----------------------------------------------------------
     def tap(self, xy, why):
@@ -787,13 +783,6 @@ class Bot:
         return True
 
     def do_summon(self, panel_xy):
-        if not has_template(TICKET_TPL):
-            if not self.ticket_warned:
-                log(f"  ! 뽑기권 템플릿(templates/{TICKET_TPL}.png)이 없어 30회 뽑기를 하지 않음. "
-                    "소환 화면(30회 비용이 뽑기권)을 띄운 뒤 python guide_auto.py --save-ticket-template 실행")
-                self.ticket_warned = True
-            self.summon_block_until = time.time() + NO_TICKET_COOLDOWN_SEC
-            return
         self.tap(panel_xy, "가이드 소환 미션 → 소환 화면 이동")
         if self.dry:
             return
@@ -1041,24 +1030,6 @@ class Bot:
                 f"30회 뽑기 {self.cnt['summon']} / 재도전 {self.cnt['retry']}")
 
 
-def save_ticket_template():
-    """지금 소환 화면(30회 비용이 뽑기권)의 비용 영역을 뽑기권 템플릿으로 저장"""
-    s = screencap()
-    if not (match(s, "summon_char_tab")[0] >= SCREEN_TH and match(s, "summon_30_btn")[0] >= SCREEN_TH):
-        print("소환 화면이 아닙니다. 게임에서 소환 화면(30회 버튼이 보이는 화면)을 띄운 뒤 다시 실행하세요.")
-        return 1
-    gem = match_in(s, _grow(GEM_COST_ROI, COST_MARGIN), "summon_cost_gem")[0]
-    if gem >= GEM_COST_TH:
-        print(f"지금 30회 비용이 보석입니다 ({gem:.2f}). 뽑기권으로 30회를 뽑을 수 있는 상태에서 다시 실행하세요.")
-        return 1
-    x1, y1, x2, y2 = GEM_COST_ROI
-    p = os.path.join(TPL_DIR, TICKET_TPL + ".png")
-    cv2.imencode(".png", s[y1:y2, x1:x2])[1].tofile(p)
-    save_shot(s, "ticket_template_source")
-    print(f"저장했습니다: {p}\n  logs/ 의 ticket_template_source_*.png 로 비용이 뽑기권인 화면이었는지 확인하세요.")
-    return 0
-
-
 def init_adb():
     global ADB, DEV
     ADB = find_adb()
@@ -1068,13 +1039,6 @@ def init_adb():
 if __name__ == "__main__":
     ap = argparse.ArgumentParser(description="윈드러너 키우기 가이드 미션 자동 루프")
     ap.add_argument("--dry-run", action="store_true", help="판정만 출력하고 탭/ESC 하지 않음")
-    ap.add_argument("--save-ticket-template", action="store_true",
-                    help="지금 소환 화면의 30회 비용(뽑기권)을 뽑기권 템플릿으로 저장")
     a = ap.parse_args()
     init_adb()
-    if a.save_ticket_template:
-        try:
-            raise SystemExit(save_ticket_template())
-        except ResolutionError as e:
-            fatal(f"화면 크기가 {e} 입니다. MuMu 해상도를 900 x 1600 (세로) 로 바꾼 뒤 다시 실행하세요.")
     Bot(a.dry_run).run()
