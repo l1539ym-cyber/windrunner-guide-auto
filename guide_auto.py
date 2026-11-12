@@ -75,7 +75,7 @@ MUMU_EXE_NAMES = {"mumunxdevice.exe", "mumuplayer.exe", "nemuplayer.exe"}  # MuM
 RESUME_SETTLE_SEC = 3        # 최소화 해제 후 화면이 정상 갱신될 때까지 대기
 
 # ---- 판정 기준값 (괄호: 실측 점수 범위) ----
-HUD_TH = 0.80            # 채팅 아이콘 (기본 화면 0.96~1.00 / 메뉴·미션창·채팅창 등 ≤0.52)
+HUD_TH = 0.80            # 채팅 아이콘 흰색 모양 (말풍선·길드 방패 1.00 / 서로 다른 아이콘 ≤0.66 / 어두운 팝업·소환 화면 0.00)
 HUD_OTHER_TH = 0.65      # 이벤트·랭킹·패스·챕터 (배경 따라 0.75~1.00 / 소환 화면 등 ≤0.30)
 HUD_MIN_OTHERS = 2       # 채팅 아이콘 외 UI 요소 중 최소 개수
 GUIDE_LABEL_TH = 0.60    # "[가이드" 주황 글자 (패널 0.89~1.00 / 그 외 ≤0.27)
@@ -100,8 +100,8 @@ CYAN = (88, 104)         # "[반복]"
 GREEN = (35, 85)         # 클리어 진행도 "(30/30)"
 
 # ---- 좌표 (900x1600 기준 실측) ----
-HUD = {  # 기본 화면 UI 요소: 이름 → 탐색 영역 (x1, y1, x2, y2)
-    "hud_chat": (0, 1267, 91, 1358),
+CHAT_ROI = (0, 1267, 91, 1358)         # 왼쪽 아래 채팅 아이콘 (templates/hud/chat/*.png 중 하나)
+HUD = {  # 채팅 아이콘 외 기본 화면 UI 요소: 이름 → 탐색 영역 (x1, y1, x2, y2)
     "hud_event": (781, 255, 893, 331),
     "hud_ranking": (771, 345, 900, 421),
     "hud_pass": (19, 358, 117, 430),
@@ -517,13 +517,61 @@ def find_close_text(s):
     return best
 
 
+# 채팅 아이콘 - 흰색 모양만 비교 -------------------------------------
+# 마지막 채팅 채널에 따라 아이콘이 바뀌고 (일반: 말풍선 / 길드: 방패), 아이콘 뒤 원은 반투명이라
+# 스테이지 배경색이 비친다. 그래서 흰색 아이콘 모양만 비교한다.
+# 팝업이 떠서 화면이 어두워지면 흰색이 사라지므로 '기본 화면 아님'으로 판정된다.
+_chat_tpls = None
+
+
+def chat_templates():
+    """templates/hud/chat/*.png 전부 = 채팅 아이콘 (흰색 마스크로 미리 만들어 둠)"""
+    global _chat_tpls
+    if _chat_tpls is None:
+        d = os.path.join(TPL_DIR, "hud", "chat")
+        _chat_tpls = []
+        for f in sorted(os.listdir(d)) if os.path.isdir(d) else []:
+            img = cv2.imdecode(np.fromfile(os.path.join(d, f), np.uint8), cv2.IMREAD_COLOR)
+            if img is not None and cv2.countNonZero(white_mask(img)):
+                _chat_tpls.append((os.path.splitext(f)[0], white_mask(img)))
+        if not _chat_tpls:
+            raise SystemExit("템플릿 없음: templates/hud/chat/*.png")
+    return _chat_tpls
+
+
+def chat_score(s):
+    """채팅 아이콘 → (점수, 가장 비슷한 아이콘 이름)"""
+    x1, y1, x2, y2 = CHAT_ROI
+    m = white_mask(s[y1:y2, x1:x2])
+    best = (0.0, "-")
+    for name, t in chat_templates():
+        sc = cv2.minMaxLoc(cv2.matchTemplate(m, t, cv2.TM_CCOEFF_NORMED))[1]
+        if np.isfinite(sc) and sc > best[0]:
+            best = (float(sc), name)
+    return best
+
+
 # 화면 판정 ---------------------------------------------------------
+def hud_scores(s):
+    """기본 화면 판정 요소별 점수 {이름: 점수} (채팅은 'chat')"""
+    sc = {"chat": chat_score(s)[0]}
+    sc.update({k: match_in(s, roi, "hud/" + k)[0] for k, roi in HUD.items()})
+    return sc
+
+
+def hud_summary(s):
+    """로그·버그 제보용: 기본 화면 판정 점수 한 줄"""
+    sc, name = chat_score(s)
+    parts = [f"채팅({name}) {sc:.2f}/{HUD_TH:.2f}"]
+    parts += [f"{k[4:]} {match_in(s, roi, 'hud/' + k)[0]:.2f}" for k, roi in HUD.items()]
+    return ", ".join(parts) + f" (나머지 기준 {HUD_OTHER_TH:.2f}, {HUD_MIN_OTHERS}개 이상)"
+
+
 def is_base_screen(s):
     """기본(전투) 화면: 채팅 아이콘 + 이벤트/랭킹/패스/챕터 중 2개 이상"""
-    hits = {k: match_in(s, roi, "hud/" + k)[0] >= (HUD_TH if k == "hud_chat" else HUD_OTHER_TH)
-            for k, roi in HUD.items()}
-    others = sum(v for k, v in hits.items() if k != "hud_chat")
-    return hits["hud_chat"] and others >= HUD_MIN_OTHERS
+    sc = hud_scores(s)
+    others = sum(v >= HUD_OTHER_TH for k, v in sc.items() if k != "chat")
+    return sc["chat"] >= HUD_TH and others >= HUD_MIN_OTHERS
 
 
 def badge_pixels(s):
@@ -984,6 +1032,7 @@ class Bot:
                 self.other_since = time.time()
             elif time.time() - self.other_since > 120:
                 log("  ! 2분 넘게 기본 화면이 아님 - 화면 저장: " + save_shot(s, "long_wait"))
+                log("    기본 화면 판정 점수: " + hud_summary(s))
                 self.other_since = time.time() + 10 ** 9      # 다음 기본 화면 전까지 다시 저장 안 함
         else:
             self.other_since = None

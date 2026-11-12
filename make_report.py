@@ -90,6 +90,7 @@ def main():
         shot_png = cv2.imencode(".png", img)[1].tobytes()
         if (img.shape[1], img.shape[0]) == ga.SCREEN_SIZE:
             info.append(f"현재 화면 판정: {ga.read_screen(img)[0]}")
+            info.append(f"기본 화면 판정 점수: {ga.hud_summary(img)}")
         else:
             info.append(f"현재 화면 판정: 지원하지 않는 해상도 {img.shape[1]}x{img.shape[0]} (900x1600 필요)")
         info.append(f"설정: INTERVAL_SEC={ga.INTERVAL_SEC}, AFTER_SUMMON_WAIT_SEC={ga.AFTER_SUMMON_WAIT_SEC}, "
