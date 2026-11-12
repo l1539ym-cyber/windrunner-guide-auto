@@ -93,7 +93,7 @@ ADB로 화면을 캡처한 뒤 OpenCV 템플릿 매칭과 색상 판정으로 �
 | `run_guide.bat` 실행 시 `Python 을 찾을 수 없습니다` | 2단계를 다시 실행 |
 | 아무것도 누르지 않고 계속 `상태: OTHER → 대기` | **MuMu 해상도가 900x1600(세로)이 아닌 경우**가 대부분. 맨 위 안내대로 해상도를 바꾸기 |
 | `연결된 안드로이드 기기가 없습니다` | MuMu Player가 켜져 있는지 확인 |
-| `adb.exe 를 찾을 수 없습니다` | MuMu를 기본 경로가 아닌 곳에 설치한 경우. `guide_auto.py` 위쪽 `ADB_CANDIDATES`에 경로 추가 |
+| `adb.exe 를 찾을 수 없습니다` | MuMu Player를 켠 상태로 두면 설치 위치를 자동으로 찾습니다 (1분마다 다시 시도). 그래도 안 되면 `user_settings.py`에 `ADB_PATH = r"실제 adb.exe 경로"` 추가 |
 
 ### (선택) 개발자용 설치·실행
 - **Git으로 받기**
@@ -274,6 +274,7 @@ UPDATE_CHECK_HOURS = 2      # 업데이트 확인을 2시간마다
 | `INTERVAL_SEC` | 5 | 화면 인식 주기(초) |
 | `AFTER_SUMMON_WAIT_SEC` | 10 | 30회 뽑기 후 대기(초) |
 | `SERIAL` | "" | ADB 기기. 비우면 게임이 실행 중인 기기를 자동 선택 |
+| `ADB_PATH` | "" | `adb.exe` 전체 경로 직접 지정 (비우면 기본 경로 확인 후 자동 탐색) |
 | `ADB_CANDIDATES` | MuMu 기본 경로 | `adb.exe` 탐색 경로 |
 | `RESUME_SETTLE_SEC` | 3 | 최소화 해제 후 재개까지 대기(초) |
 | `RETRY_ON_DEFEAT` | True | 패배 시 '재도전' 누르기 |

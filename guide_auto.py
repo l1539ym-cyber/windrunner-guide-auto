@@ -22,7 +22,9 @@
 import argparse
 import ctypes
 import datetime as dt
+import glob
 import os
+import string
 import subprocess
 import sys
 import time
@@ -32,10 +34,14 @@ import cv2
 import numpy as np
 
 # ============================== 설정 ==============================
+ADB_PATH = ""                 # adb.exe 전체 경로를 직접 지정 (비우면 아래 후보 + 자동 탐색)
 ADB_CANDIDATES = [
     r"C:\Program Files\Netease\MuMuPlayer\nx_main\adb.exe",
     r"C:\Program Files\Netease\MuMuPlayer\nx_device\15.0\shell\adb.exe",
+    r"C:\Program Files\Netease\MuMuPlayer-12.0\nx_main\adb.exe",
     r"C:\Program Files\Netease\MuMuPlayer-12.0\shell\adb.exe",
+    r"C:\Program Files\Netease\MuMu Player 12\nx_main\adb.exe",
+    r"C:\Program Files\Netease\MuMu Player 12\shell\adb.exe",
     "adb",
 ]
 SERIAL = ""                  # 비워두면 게임 실행 중인 기기 자동 선택 (예: "emulator-5556")
@@ -129,6 +135,7 @@ except ImportError:
 import updater  # noqa: E402
 
 EXIT_UPDATE = 3              # 새 버전 발견 시 종료 코드 → run.py 가 업데이트 후 다시 실행
+EXIT_CONFIG = 4              # 설치/설정 문제 (adb.exe 없음 등) → run.py 가 천천히 다시 시도
 
 BASE = os.path.dirname(os.path.abspath(__file__))
 TPL_DIR = os.path.join(BASE, "templates")
@@ -139,15 +146,108 @@ BASE_STATES = ("REPEAT", "GUIDE_CLEAR", "GUIDE_SUMMON", "GUIDE_PROGRESS", "BASE_
 
 
 # ----------------------------- ADB -----------------------------
-def find_adb():
-    for c in ADB_CANDIDATES:
-        if c == "adb" or os.path.exists(c):
+def fatal(msg):
+    """설치·설정 문제: 바로 다시 시작해도 해결되지 않으므로 EXIT_CONFIG 로 종료 (run.py 가 천천히 재시도)"""
+    print(msg, flush=True)
+    raise SystemExit(EXIT_CONFIG)
+
+
+def _adb_works(c):
+    try:
+        subprocess.run([c, "version"], capture_output=True, check=True, timeout=15)
+        return True
+    except Exception:
+        return False
+
+
+def _drives():
+    return [f"{d}:\\" for d in string.ascii_uppercase[2:] if os.path.exists(f"{d}:\\")]
+
+
+def _running_mumu_dirs():
+    """실행 중인 MuMu 프로그램 위치 (MuMu 가 켜져 있으면 설치 위치를 정확히 알 수 있음)"""
+    try:
+        out = subprocess.run(["powershell", "-NoProfile", "-Command",
+                              "Get-Process | Where-Object { $_.Path -match 'mumu|nemu' } | "
+                              "Select-Object -ExpandProperty Path -Unique"],
+                             capture_output=True, text=True, timeout=20).stdout
+        return [os.path.dirname(l.strip()) for l in out.splitlines() if l.strip()]
+    except Exception:
+        return []
+
+
+def _registry_mumu_dirs():
+    """제어판 '프로그램 제거' 목록의 MuMu 설치 위치"""
+    dirs = []
+    try:
+        import winreg
+    except ImportError:
+        return dirs
+    for hive, path in ((winreg.HKEY_LOCAL_MACHINE, r"SOFTWARE\Microsoft\Windows\CurrentVersion\Uninstall"),
+                       (winreg.HKEY_LOCAL_MACHINE, r"SOFTWARE\WOW6432Node\Microsoft\Windows\CurrentVersion\Uninstall"),
+                       (winreg.HKEY_CURRENT_USER, r"SOFTWARE\Microsoft\Windows\CurrentVersion\Uninstall")):
+        try:
+            root = winreg.OpenKey(hive, path)
+        except OSError:
+            continue
+        for i in range(winreg.QueryInfoKey(root)[0]):
             try:
-                subprocess.run([c, "version"], capture_output=True, check=True)
+                k = winreg.OpenKey(root, winreg.EnumKey(root, i))
+                name = str(winreg.QueryValueEx(k, "DisplayName")[0]).lower()
+            except OSError:
+                continue
+            if "mumu" not in name and "nemu" not in name:
+                continue
+            for v in ("InstallLocation", "UninstallString", "DisplayIcon"):
+                try:
+                    val = str(winreg.QueryValueEx(k, v)[0]).strip()
+                except OSError:
+                    continue
+                val = val.split('"')[1] if val.startswith('"') else val.split(",")[0]
+                if val:
+                    dirs.append(val if os.path.isdir(val) else os.path.dirname(val))
+    return dirs
+
+
+def _folder_mumu_dirs():
+    """모든 드라이브에서 이름에 MuMu 가 들어간 폴더 (기본 위치가 아닌 곳에 설치한 경우)"""
+    dirs = []
+    for drv in _drives():
+        for pat in ("MuMu*", "*/MuMu*", "*/*/MuMu*"):
+            dirs.extend(d for d in glob.glob(os.path.join(drv, pat)) if os.path.isdir(d))
+    return dirs
+
+
+def _adb_in(d):
+    """폴더 d 와 그 위 두 단계, 아래 세 단계에서 adb.exe 찾기 (MuMu 버전마다 위치가 다름)"""
+    d = os.path.abspath(d)
+    for up in (d, os.path.dirname(d), os.path.dirname(os.path.dirname(d))):
+        if len(up) <= 3:                       # 드라이브 최상위 전체를 뒤지지 않음
+            continue
+        for pat in ("adb.exe", "*/adb.exe", "*/*/adb.exe", "*/*/*/adb.exe"):
+            yield from sorted(glob.glob(os.path.join(glob.escape(up), pat)))
+
+
+def find_adb():
+    tried = []
+    for c in ([ADB_PATH] if ADB_PATH else []) + list(ADB_CANDIDATES):
+        if c == "adb" or os.path.exists(c):
+            tried.append(c)
+            if _adb_works(c):
                 return c
-            except Exception:
-                pass
-    raise SystemExit("adb.exe 를 찾을 수 없습니다. ADB_CANDIDATES 경로를 확인하세요.")
+    # 기본 경로에 없으면 MuMu 설치 위치를 자동으로 찾음 (실행 중인 MuMu → 설치 정보 → 폴더 이름)
+    for finder in (_running_mumu_dirs, _registry_mumu_dirs, _folder_mumu_dirs):
+        for d in finder():
+            for c in _adb_in(d):
+                if c not in tried:
+                    tried.append(c)
+                    if _adb_works(c):
+                        print(f"[자동탐색] adb.exe 를 찾았습니다: {c}", flush=True)
+                        return c
+    fatal("adb.exe 를 찾을 수 없습니다. (MuMu Player 설치 위치를 자동으로 찾지 못함)\n"
+          "  1) MuMu Player 를 켠 상태로 두면 자동으로 다시 찾습니다. (1분마다 다시 시도)\n"
+          "  2) 그래도 안 되면 MuMu 설치 폴더 안의 adb.exe 위치를 user_settings.py 에 적으세요.\n"
+          "      ADB_PATH = r\"D:\\MuMuPlayer\\nx_main\\adb.exe\"")
 
 
 ADB = find_adb()

@@ -4,7 +4,9 @@
   2) guide_auto.py 실행
   3) guide_auto.py 가
        - 종료 코드 3 (실행 중 새 버전 발견) → 업데이트 후 바로 다시 실행
+       - 종료 코드 4 (adb.exe 없음 등)    → 1분 후 다시 실행
        - 오류로 종료 (MuMu 꺼짐 등)       → 10초 후 다시 실행
+     오류로 다시 시작할 때도 10분에 한 번은 새 버전을 확인 (오류를 고친 업데이트를 받을 수 있게)
        - 정상 종료 (Ctrl+C)              → 끝
 """
 import os
@@ -16,6 +18,8 @@ import updater
 
 BASE = os.path.dirname(os.path.abspath(__file__))
 EXIT_UPDATE = 3
+EXIT_CONFIG = 4
+ERROR_UPDATE_CHECK_SEC = 600
 SCRIPT = os.environ.get("WINDRUNNER_SCRIPT", "guide_auto.py")   # 테스트용으로 바꿀 수 있음
 
 try:
@@ -33,6 +37,7 @@ def pip_install():
 def main():
     if updater.check_and_update():
         pip_install()
+    last_check = time.time()
     while True:
         try:
             code = subprocess.call([sys.executable, os.path.join(BASE, SCRIPT), *sys.argv[1:]], cwd=BASE)
@@ -45,12 +50,17 @@ def main():
             if updater.check_and_update():
                 pip_install()
             continue
-        print(f"\n[자동 재시작] 프로그램이 오류로 멈춤 (코드 {code}). 10초 후 다시 시작합니다. "
+        wait = 60 if code == EXIT_CONFIG else 10
+        print(f"\n[자동 재시작] 프로그램이 오류로 멈춤 (코드 {code}). {wait}초 후 다시 시작합니다. "
               "완전히 끄려면 이 창을 닫으세요.", flush=True)
         try:
-            time.sleep(10)
+            time.sleep(wait)
         except KeyboardInterrupt:
             break
+        if time.time() - last_check >= ERROR_UPDATE_CHECK_SEC:   # 오류를 고친 새 버전이 있을 수 있음
+            last_check = time.time()
+            if updater.check_and_update():
+                pip_install()
 
 
 if __name__ == "__main__":
