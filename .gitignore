@@ -22,3 +22,8 @@ templates/title_*.png
 templates/guide_label.png
 templates/guide_label_done.png
 templates/repeat_label.png
+
+# 자동 업데이트 임시 파일
+.update_stage/
+.update_backup/
+.update_incomplete

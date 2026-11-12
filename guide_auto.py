@@ -8,8 +8,8 @@
        if   [반복] 패널               → 패널 탭 (모험 코인 즉시 수령, 뽑기 안 함)
        elif [가이드] 클리어 (초록 진행도) → 패널 탭 (보상 수령)
        elif [가이드] ○○ 소환           → 패널 탭 → 소환 화면 30회 비용 확인
-                                          뽑기권이면 '30회' 탭 → 10초 대기 → 기본 화면까지 빠져나옴
-                                          보석이면 (이미 뽑았음) 뽑지 않고 빠져나옴
+                                          뽑기권 아이콘이 확실히 보일 때만 '30회' 탭 → 10초 대기 → 기본 화면까지 빠져나옴
+                                          보석이거나 비용을 판별할 수 없으면 뽑지 않고 빠져나옴
        else (진행 중 / 패널 안 보임)   → 대기
   else (채팅·길드·상점·메뉴 등 다른 화면) → 대기 (아무것도 누르지 않음, 기본 화면 복귀 시 재개)
 
@@ -44,7 +44,9 @@ ADB_CANDIDATES = [
     r"C:\Program Files\Netease\MuMu Player 12\shell\adb.exe",
     "adb",
 ]
-SERIAL = ""                  # 비워두면 게임 실행 중인 기기 자동 선택 (예: "emulator-5556")
+SERIAL = ""                  # 비워두면 시작할 때 게임 실행 중인 기기 자동 선택 (예: "emulator-5556")
+                             # 한 번 고른 기기는 실행 중에 절대 바꾸지 않음 (연결이 끊기면 같은 기기를 기다림)
+MUMU_WINDOW_TITLE = ""       # MuMu 를 여러 개 띄울 때: 대상 MuMu 창 제목에 들어 있는 글자 (최소화 감지용)
 GAME_PACKAGE = "net.lightcon.windidle"
 
 INTERVAL_SEC = 5             # 화면 인식 주기
@@ -87,6 +89,7 @@ SUMMON_WORD_TH = 0.75    # 문구 속 '소환' 흰 글자 (소환 0.86~1.00 / �
 SUMMON_WORD_VMIN = 180
 SCREEN_TH = 0.90         # 소환 화면 / 소환 결과 화면 구성요소
 GEM_COST_TH = 0.85       # 소환 화면 30회 비용이 보석 아이콘인지 (보석 1.00 / 뽑기권 ≤0.60)
+TICKET_COST_TH = 0.85    # 소환 화면 30회 비용이 뽑기권인지 (templates/summon_cost_ticket.png 와 비교)
 DEFEAT_TH = 0.80         # 'Defeat' 제목, '재도전' 버튼 (패배 0.94~1.00 / 그 외 ≤0.43)
 CLOSE_TEXT_TH = 0.80     # '터치하여 닫기' 등 닫기 문구 (실제 0.90~1.00 / 그 외 ≤0.65)
 CLOSE_TEXT_SCALES = tuple(round(0.70 + 0.05 * i, 2) for i in range(17))  # 0.70~1.50배
@@ -113,11 +116,19 @@ BORDER_ROIS = [(236, 1165, 250, 1235),  # 패널 왼쪽 테두리
 SUMMON_WORD_OFF = (-7, 31, 253, 86)    # 라벨 기준 미션 문구 영역 ('소환' 글자 탐색)
 PANEL_TAP_OFF = (143, 37)              # 라벨 좌상단 → 패널 탭 위치
 GEM_COST_ROI = (570, 1125, 650, 1185)  # 소환 화면 30회 버튼 비용 아이콘
+TICKET_TPL = "summon_cost_ticket"      # 뽑기권 비용 템플릿 (= 뽑기권일 때 GEM_COST_ROI 영역 그대로).
+                                       #   없으면 뽑기를 하지 않음. 만들기: python guide_auto.py --save-ticket-template
+COST_MARGIN = 12                       # 비용 템플릿 탐색 여유 (픽셀)
+COST_CHECKS = 3                        # 비용 판정 확인 횟수 (뽑기 전 연속으로 모두 '뽑기권'이어야 함)
+SUMMON_ENTER_TIMEOUT = 12              # 패널 탭 후 소환 화면이 뜰 때까지 기다리는 최대 시간(초)
 SUMMON_30_TAP = (687, 1130)            # 소환 화면 '30회' 버튼
 RESULT_CLOSE_TAP = (450, 1487)         # 소환 결과 '터치하여 닫기' (결과 화면은 ESC 무반응)
 ESC_SETTLE_SEC = 3.0                   # ESC 후 화면 전환 대기 (연속 ESC 방지)
 EXIT_MAX_STEPS = 20                    # 뽑기 후 기본 화면 복귀 시도 횟수 (1.5초 간격)
 UNKNOWN_FALLBACK = 5                   # 복귀 중 모르는 화면이 이만큼 연속되면 하단 중앙 한 번 탭
+SCREEN_SIZE = (900, 1600)              # 지원 해상도 (가로, 세로). 다르면 아무것도 누르지 않고 대기
+BAD_RES_WAIT_SEC = 30                  # 해상도가 다를 때 다시 확인 간격(초)
+MAX_SAVED_SHOTS = 100                  # logs/ 에 남기는 화면 캡처 최대 개수 (오래된 것부터 삭제)
 
 # ---- 자동 업데이트 ----
 AUTO_UPDATE = True           # GitHub 에 새 버전이 올라오면 자동으로 받아서 다시 시작
@@ -250,16 +261,25 @@ def find_adb():
           "      ADB_PATH = r\"D:\\MuMuPlayer\\nx_main\\adb.exe\"")
 
 
-ADB = find_adb()
+def _list_devices():
+    out = subprocess.run([ADB, "devices"], capture_output=True, text=True, timeout=15).stdout
+    return [l.split()[0] for l in out.splitlines()[1:] if l.strip().endswith("device")]
+
+
+def _is_mumu_serial(d):
+    return d.startswith("emulator-") or d.startswith("127.0.0.1:") or d.startswith("localhost:")
 
 
 def pick_serial():
+    """시작할 때 한 번만 호출: 대상 기기 결정"""
     if SERIAL:
         return SERIAL
     for port in (16384, 7555, 5555):        # MuMu 기본 포트 시도 (실패해도 무관)
-        subprocess.run([ADB, "connect", f"127.0.0.1:{port}"], capture_output=True, timeout=5)
-    out = subprocess.run([ADB, "devices"], capture_output=True, text=True).stdout
-    devs = [l.split()[0] for l in out.splitlines()[1:] if l.strip().endswith("device")]
+        try:
+            subprocess.run([ADB, "connect", f"127.0.0.1:{port}"], capture_output=True, timeout=5)
+        except subprocess.SubprocessError:
+            pass
+    devs = _list_devices()
     if not devs:
         raise SystemExit("연결된 안드로이드 기기가 없습니다. MuMu Player 를 실행하세요.")
     # emulator-NNNN (로컬 연결)이 127.0.0.1:포트 (네트워크 연결)보다 잘 끊기지 않으므로 우선
@@ -272,54 +292,82 @@ def pick_serial():
             continue
         if GAME_PACKAGE in focus:
             return d
-    return devs[0]
-
-
-DEV = pick_serial()
-
-
-def _run_adb(args):
-    return subprocess.run([ADB, "-s", DEV, *args], capture_output=True, check=True, timeout=20).stdout
+    mumu = [d for d in devs if _is_mumu_serial(d)]
+    if len(devs) == 1 or len(mumu) == 1:     # 후보가 하나뿐일 때만 (게임은 나중에 자동 실행됨)
+        return devs[0] if len(devs) == 1 else mumu[0]
+    fatal("게임이 실행 중인 기기를 찾지 못했고, 연결된 기기가 여러 대입니다: " + ", ".join(devs) + "\n"
+          "  엉뚱한 기기를 조작하지 않도록 멈춥니다 (1분마다 다시 확인). 게임을 켜 두거나,\n"
+          "  user_settings.py 에 SERIAL = \"기기이름\" 을 적어 대상 기기를 지정하세요.")
 
 
 class AdbError(RuntimeError):
     """MuMu 와 ADB 통신이 안 됨"""
 
 
+ADB = DEV = None
+_reconnected = False                         # 재연결이 있었음 → 다음 행동 전에 게임·화면을 다시 확인
+
+
+def _run_adb(args):
+    return subprocess.run([ADB, "-s", DEV, *args], capture_output=True, check=True, timeout=20).stdout
+
+
 def reconnect():
-    """기기를 다시 찾아 연결"""
-    global DEV
+    """같은 기기(DEV)에 다시 연결. 다른 기기로는 절대 바꾸지 않음 (없으면 AdbError → 나중에 다시 시도)"""
+    global _reconnected
+    if ":" in DEV:                           # 127.0.0.1:16384 같은 네트워크 연결은 다시 connect
+        try:
+            subprocess.run([ADB, "connect", DEV], capture_output=True, timeout=5)
+        except subprocess.SubprocessError:
+            pass
     try:
-        new = pick_serial()
-    except SystemExit as e:
-        raise AdbError(str(e))
-    if new != DEV:
-        log(f"  [자동복구] ADB 기기 다시 연결: {DEV} → {new}")
-        DEV = new
+        devs = _list_devices()
+    except subprocess.SubprocessError as e:
+        raise AdbError(f"ADB 기기 목록 확인 실패: {e}")
+    if DEV not in devs:
+        raise AdbError(f"대상 기기 {DEV} 가 연결돼 있지 않음 - 다시 연결될 때까지 기다림 "
+                       f"(다른 기기로 바꾸지 않음{', 현재 연결: ' + ', '.join(devs) if devs else ''})")
+    _reconnected = True
+
+
+def consume_reconnected():
+    global _reconnected
+    r, _reconnected = _reconnected, False
+    return r
 
 
 def restart_adb_server():
-    """ADB 서버를 껐다 켜고 기기 다시 연결"""
+    """ADB 서버를 껐다 켜고 같은 기기에 다시 연결"""
     subprocess.run([ADB, "kill-server"], capture_output=True, timeout=20)
     time.sleep(2)
     subprocess.run([ADB, "start-server"], capture_output=True, timeout=30)
     reconnect()
 
 
-def adb(*args, binary=False):
-    """ADB 명령 실행. 실패하면 (연결이 끊긴 경우) 기기를 다시 찾아 연결한 뒤 한 번 더 시도."""
+def adb(*args, retry=False):
+    """ADB 명령 실행.
+    retry=True (화면 캡처·상태 조회처럼 두 번 실행해도 안전한 명령): 실패하면 같은 기기에 다시 연결 후 한 번 더.
+    retry=False (터치·키 입력 등): 실패해도 다시 보내지 않음. 타임아웃이 났어도 이미 눌렸을 수 있으므로
+    다음 주기에 화면을 새로 읽고 행동을 다시 정한다."""
     try:
         return _run_adb(args)
-    except subprocess.SubprocessError:
+    except subprocess.SubprocessError as e:
+        first = e
+    try:
         reconnect()
-        try:
-            return _run_adb(args)
-        except subprocess.SubprocessError as e:
-            raise AdbError(f"{' '.join(args[:3])} 실패 ({DEV}): {getattr(e, 'stderr', b'') or e}")
+    except AdbError as e:
+        raise AdbError(f"{' '.join(args[:3])} 실패 ({DEV}): {e}")
+    if not retry:
+        raise AdbError(f"{' '.join(args[:3])} 실패 ({DEV}, 다시 보내지 않음): "
+                       f"{getattr(first, 'stderr', b'') or first}")
+    try:
+        return _run_adb(args)
+    except subprocess.SubprocessError as e:
+        raise AdbError(f"{' '.join(args[:3])} 실패 ({DEV}): {getattr(e, 'stderr', b'') or e}")
 
 
 def game_in_front():
-    out = adb("shell", "dumpsys window | grep mCurrentFocus").decode("utf-8", "ignore")
+    out = adb("shell", "dumpsys window | grep mCurrentFocus", retry=True).decode("utf-8", "ignore")
     return GAME_PACKAGE in out
 
 
@@ -327,11 +375,17 @@ def launch_game():
     adb("shell", "monkey", "-p", GAME_PACKAGE, "-c", "android.intent.category.LAUNCHER", "1")
 
 
-def screencap():
-    img = cv2.imdecode(np.frombuffer(adb("exec-out", "screencap", "-p", binary=True), np.uint8),
+class ResolutionError(RuntimeError):
+    """지원하지 않는 화면 크기"""
+
+
+def screencap(check_size=True):
+    img = cv2.imdecode(np.frombuffer(adb("exec-out", "screencap", "-p", retry=True), np.uint8),
                        cv2.IMREAD_COLOR)
     if img is None:
         raise AdbError("화면 캡처 실패 (빈 이미지)")
+    if check_size and (img.shape[1], img.shape[0]) != SCREEN_SIZE:
+        raise ResolutionError(f"{img.shape[1]}x{img.shape[0]}")
     return img
 
 
@@ -345,6 +399,10 @@ def key(code):
 
 # --------------------------- 이미지 인식 ---------------------------
 _tpl = {}
+
+
+def has_template(name):
+    return name in _tpl or os.path.exists(os.path.join(TPL_DIR, name + ".png"))
 
 
 def T(name):
@@ -367,6 +425,26 @@ def match_in(img, roi, name):
     x1, y1, x2, y2 = roi
     sc, (x, y) = match(img[y1:y2, x1:x2], name)
     return sc, (x + x1, y + y1)
+
+
+def _grow(roi, m):
+    x1, y1, x2, y2 = roi
+    return (max(0, x1 - m), max(0, y1 - m), x2 + m, y2 + m)
+
+
+def summon_cost(s):
+    """소환 화면 30회 버튼 비용 → ("ticket" | "gem" | "unknown", 설명)
+    뽑기권은 '보석이 아님'이 아니라 뽑기권 템플릿과 직접 일치할 때만 인정한다.
+    (비용 영역이 가려졌거나 아이콘이 바뀐 경우 = unknown → 뽑지 않음)"""
+    gem = match_in(s, _grow(GEM_COST_ROI, COST_MARGIN), "summon_cost_gem")[0]
+    if gem >= GEM_COST_TH:
+        return "gem", f"보석 {gem:.2f}"
+    if not has_template(TICKET_TPL):
+        return "unknown", f"뽑기권 템플릿 없음 (templates/{TICKET_TPL}.png)"
+    ticket = match_in(s, _grow(GEM_COST_ROI, COST_MARGIN), TICKET_TPL)[0]
+    if ticket >= TICKET_COST_TH:
+        return "ticket", f"뽑기권 {ticket:.2f} / 보석 {gem:.2f}"
+    return "unknown", f"뽑기권 {ticket:.2f} / 보석 {gem:.2f}"
 
 
 def white_mask(img, vmin=200):
@@ -497,8 +575,8 @@ def read_screen(s):
     if match(s, "summon_result_close")[0] >= SCREEN_TH:
         return "SUMMON_RESULT", {}
     if match(s, "summon_char_tab")[0] >= SCREEN_TH and match(s, "summon_30_btn")[0] >= SCREEN_TH:
-        gem = match_in(s, GEM_COST_ROI, "summon_cost_gem")[0] >= GEM_COST_TH
-        return "SUMMON_SCREEN", {"gem_cost": gem}
+        cost, why = summon_cost(s)
+        return "SUMMON_SCREEN", {"cost": cost, "cost_why": why}
     # 3) 기본 화면 → 패널 판정
     if is_base_screen(s):
         return read_panel(s)
@@ -530,6 +608,13 @@ def _exe_name(hwnd):
         _kernel32.CloseHandle(h)
 
 
+def _window_title(hwnd):
+    n = _user32.GetWindowTextLengthW(hwnd)
+    buf = ctypes.create_unicode_buffer(n + 1)
+    _user32.GetWindowTextW(hwnd, buf, n + 1)
+    return buf.value
+
+
 def mumu_windows():
     found = []
 
@@ -542,12 +627,22 @@ def mumu_windows():
     return found
 
 
-def mumu_minimized():
-    """True=최소화됨, False=화면에 있음, None=창을 못 찾음"""
+def target_windows():
+    """대상 MuMu 창 (MUMU_WINDOW_TITLE 이 있으면 제목으로 거름)"""
     wins = mumu_windows()
+    if MUMU_WINDOW_TITLE:
+        wins = [h for h in wins if MUMU_WINDOW_TITLE.lower() in _window_title(h).lower()]
+    return wins
+
+
+def mumu_minimized():
+    """True=최소화됨, False=화면에 있음, None=창을 못 찾음.
+    창이 여러 개이고 대상 창을 특정할 수 없으면(MUMU_WINDOW_TITLE 미설정) 하나라도 최소화돼 있을 때
+    최소화로 본다 (대상 창이 최소화됐는데 모르고 조작하는 것보다 잠시 멈추는 편이 안전)."""
+    wins = target_windows()
     if not wins:
         return None
-    return all(_user32.IsIconic(h) for h in wins)
+    return any(_user32.IsIconic(h) for h in wins)
 
 
 # ------------------------------ 로그 ------------------------------
@@ -559,8 +654,20 @@ def log(msg):
         f.write(line + "\n")
 
 
+def prune_shots(keep=None):
+    """logs/ 의 화면 캡처가 너무 많아지지 않게 오래된 것부터 삭제"""
+    keep = MAX_SAVED_SHOTS if keep is None else keep
+    shots = sorted(glob.glob(os.path.join(LOG_DIR, "*.png")), key=os.path.getmtime)
+    for f in shots[:max(0, len(shots) - keep)]:
+        try:
+            os.remove(f)
+        except OSError:
+            pass
+
+
 def save_shot(img, tag):
     os.makedirs(LOG_DIR, exist_ok=True)
+    prune_shots(MAX_SAVED_SHOTS - 1)
     p = os.path.join(LOG_DIR, f"{tag}_{dt.datetime.now():%Y%m%d_%H%M%S}.png")
     cv2.imencode(".png", img)[1].tofile(p)
     return p
@@ -588,6 +695,8 @@ class Bot:
         self.stuck_since = 0
         self.stuck_escaped = False
         self.next_update_check = time.time() + UPDATE_CHECK_HOURS * 3600   # 시작 때는 run.py 가 확인함
+        self.bad_res = None              # 지원하지 않는 해상도를 본 경우 그 크기 (안내 한 번만)
+        self.ticket_warned = False
 
     # 입력 -----------------------------------------------------------
     def tap(self, xy, why):
@@ -614,7 +723,11 @@ class Bot:
             log(f"▶ MuMu 창 복원 - {RESUME_SETTLE_SEC}초 후 재개")
             time.sleep(RESUME_SETTLE_SEC)
             self.last_state = None
-        return screencap()
+        s = screencap()
+        if self.bad_res:
+            log(f"▶ 화면 크기 정상 ({SCREEN_SIZE[0]}x{SCREEN_SIZE[1]}) - 재개")
+            self.bad_res = None
+        return s
 
     # 뽑기 -----------------------------------------------------------
     def escape_to_base(self):
@@ -648,28 +761,63 @@ class Bot:
         log("  ! 기본 화면 복귀 실패 - 다음 주기에 다시 시도")
         return False
 
+    def wait_summon_screen(self):
+        """패널 탭 후 소환 화면이 뜰 때까지 반복 확인 → (state, info) 또는 시간 초과 시 (None, {})"""
+        deadline = time.time() + SUMMON_ENTER_TIMEOUT
+        state = None
+        while True:
+            time.sleep(1.0)
+            state, info = read_screen(self.look())
+            if state in ("SUMMON_SCREEN", "SUMMON_RESULT", "CLOSE_TEXT"):
+                return state, info
+            if time.time() >= deadline:
+                return state, {}
+
+    def confirm_ticket(self, info):
+        """뽑기 직전 확인: 비용이 COST_CHECKS 번 연속 '뽑기권'이어야 True"""
+        for i in range(COST_CHECKS):
+            if i:
+                time.sleep(0.5)
+                state, info = read_screen(self.look())
+                if state != "SUMMON_SCREEN":
+                    log(f"  ! 뽑기 직전 화면이 바뀜({state}) - 뽑지 않음")
+                    return False
+            if info["cost"] != "ticket":
+                return False
+        return True
+
     def do_summon(self, panel_xy):
+        if not has_template(TICKET_TPL):
+            if not self.ticket_warned:
+                log(f"  ! 뽑기권 템플릿(templates/{TICKET_TPL}.png)이 없어 30회 뽑기를 하지 않음. "
+                    "소환 화면(30회 비용이 뽑기권)을 띄운 뒤 python guide_auto.py --save-ticket-template 실행")
+                self.ticket_warned = True
+            self.summon_block_until = time.time() + NO_TICKET_COOLDOWN_SEC
+            return
         self.tap(panel_xy, "가이드 소환 미션 → 소환 화면 이동")
         if self.dry:
             return
-        time.sleep(2.5)
-        state, info = read_screen(self.look())
+        self.exit_pending = True           # 지금부터 화면 전환은 봇이 시작한 것 → 반드시 기본 화면까지 복귀
+        state, info = self.wait_summon_screen()
         if state != "SUMMON_SCREEN":
-            log(f"  ! 소환 화면이 아님({state}) - 다음 주기에 다시 시도")
-            if state in ("SUMMON_RESULT", "CLOSE_TEXT"):
-                self.exit_pending = True
-                self.escape_to_base()
-            return
-        if info["gem_cost"]:
-            # 뽑기권이 없음 = 이 미션의 30회는 이미 뽑았음 → 보석을 쓰지 않도록 누르지 않음
-            log(f"  30회 비용이 보석 → 이미 뽑은 미션으로 판단, 뽑지 않음 ({NO_TICKET_COOLDOWN_SEC}초간 재진입 안 함)")
-            self.summon_block_until = time.time() + NO_TICKET_COOLDOWN_SEC
-            self.exit_pending = True
+            log(f"  ! {SUMMON_ENTER_TIMEOUT}초 안에 소환 화면이 열리지 않음({state}) - 복귀 후 다음 주기에 다시 시도")
             self.escape_to_base()
             return
-        self.tap(SUMMON_30_TAP, "30회 뽑기 (뽑기권)")
+        if info["cost"] == "gem":
+            # 뽑기권이 없음 = 이 미션의 30회는 이미 뽑았음 → 보석을 쓰지 않도록 누르지 않음
+            log(f"  30회 비용이 보석({info['cost_why']}) → 이미 뽑은 미션으로 판단, 뽑지 않음 "
+                f"({NO_TICKET_COOLDOWN_SEC}초간 재진입 안 함)")
+            self.summon_block_until = time.time() + NO_TICKET_COOLDOWN_SEC
+            self.escape_to_base()
+            return
+        if not self.confirm_ticket(info):
+            log(f"  ! 30회 비용을 뽑기권으로 확인하지 못함({info['cost_why']}) - 보석 사용 방지를 위해 뽑지 않음, "
+                "화면 저장: " + save_shot(self.look(), "summon_cost_unknown"))
+            self.summon_block_until = time.time() + NO_TICKET_COOLDOWN_SEC
+            self.escape_to_base()
+            return
+        self.tap(SUMMON_30_TAP, f"30회 뽑기 (뽑기권 확인: {info['cost_why']})")
         self.cnt["summon"] += 1
-        self.exit_pending = True
         self.summon_block_until = time.time() + SUMMON_COOLDOWN_SEC
         log(f"  {AFTER_SUMMON_WAIT_SEC}초 대기 (오동작 방지)")
         time.sleep(AFTER_SUMMON_WAIT_SEC)
@@ -736,7 +884,7 @@ class Bot:
         if self.err_fail >= ERROR_RESET_AFTER:
             shot = None
             try:
-                shot = screencap()
+                shot = screencap(check_size=False)
             except Exception:
                 pass
             self.heal("오류가 계속되어 내부 상태 초기화", shot)
@@ -746,21 +894,21 @@ class Bot:
             self.err_fail = 0
 
     def check_game_front(self):
-        """게임이 꺼졌거나 다른 앱이 앞에 있으면 (2번 연속 확인 후) 게임 다시 실행. 실행했으면 True"""
+        """게임이 꺼졌거나 다른 앱이 앞에 있으면 (2번 연속 확인 후) 게임 다시 실행.
+        게임이 맨 앞이 아니면 True (= 이번 주기에는 아무것도 누르지 않음)"""
         if game_in_front():
             self.not_front = 0
             return False
         self.not_front += 1
-        log(f"  ! 게임이 화면 맨 앞에 없음 ({self.not_front}회)")
+        log(f"  ! 게임이 화면 맨 앞에 없음 ({self.not_front}회) - 이번 주기는 누르지 않음")
         if self.not_front >= 2 and AUTO_RELAUNCH_GAME and not self.dry:
-            self.heal("게임 다시 실행", screencap())
+            self.heal("게임 다시 실행", screencap(check_size=False))
             launch_game()
             log(f"  게임 로딩 {RELAUNCH_WAIT_SEC}초 대기")
             time.sleep(RELAUNCH_WAIT_SEC)
             self.not_front = 0
             self.last_state = None
-            return True
-        return False
+        return True
 
     def check_stuck(self, state, s):
         """기본 화면이 아닌 같은 화면이 STUCK_SEC 넘게 그대로면 ESC 한 번 (멈춘 팝업 닫기)"""
@@ -793,7 +941,11 @@ class Bot:
     # 한 주기 ---------------------------------------------------------
     def tick(self):
         self.tick_n += 1
-        if self.tick_n % GAME_CHECK_EVERY == 0:
+        reconnected = consume_reconnected()
+        if reconnected:
+            log("  [자동복구] ADB 재연결됨 - 게임과 화면을 다시 확인한 뒤 진행")
+            self.last_state = None
+        if reconnected or self.tick_n % GAME_CHECK_EVERY == 0:
             if self.check_game_front():
                 return
         if self.exit_pending:          # 지난번 뽑기 후 복귀를 못 끝냈으면 그것부터
@@ -803,7 +955,7 @@ class Bot:
                 self.exit_fail += 1
                 if self.exit_fail >= EXIT_FAIL_GIVEUP:
                     self.heal(f"뽑기 후 복귀가 {self.exit_fail}번 연속 실패 - 복귀 시도 중단 (멈춘 화면 처리에 맡김)",
-                              self.look())
+                              screencap(check_size=False))
                     self.exit_pending = False
                     self.exit_fail = 0
                 return
@@ -854,6 +1006,17 @@ class Bot:
             log(f"  누적: 가이드 {self.cnt['guide']} / 반복 {self.cnt['repeat']} / "
                 f"30회 뽑기 {self.cnt['summon']} / 재도전 {self.cnt['retry']}")
 
+    def on_bad_resolution(self, size):
+        """지원하지 않는 해상도: 아무것도 누르지 않고 안내만 (오류 반복·화면 저장 없이) 천천히 다시 확인"""
+        if self.bad_res != size:
+            log(f"  ! 화면 크기가 {size} 입니다. 이 프로그램은 {SCREEN_SIZE[0]}x{SCREEN_SIZE[1]} (세로) 에서만 동작합니다. "
+                "MuMu 오른쪽 위 ⋮ → 디바이스 설정 → 화면 → 해상도 설정에서 900 x 1600 으로 바꾸세요. "
+                f"바꿀 때까지 아무것도 누르지 않고 {BAD_RES_WAIT_SEC}초마다 다시 확인합니다.")
+            self.bad_res = size
+        self.exit_pending = False
+        self.last_state = None
+        return BAD_RES_WAIT_SEC
+
     def run(self):
         log(f"시작 - 기기 {DEV}, {INTERVAL_SEC}초 주기" + (" (dry-run)" if self.dry else ""))
         try:
@@ -865,6 +1028,9 @@ class Bot:
                     if self.acted:
                         wait = ACTION_INTERVAL_SEC
                     self.on_ok()
+                except ResolutionError as e:
+                    wait = self.on_bad_resolution(str(e))
+                    self.on_ok()
                 except (AdbError, subprocess.SubprocessError) as e:
                     wait = self.on_adb_fail(e)
                 except Exception as e:
@@ -875,7 +1041,40 @@ class Bot:
                 f"30회 뽑기 {self.cnt['summon']} / 재도전 {self.cnt['retry']}")
 
 
+def save_ticket_template():
+    """지금 소환 화면(30회 비용이 뽑기권)의 비용 영역을 뽑기권 템플릿으로 저장"""
+    s = screencap()
+    if not (match(s, "summon_char_tab")[0] >= SCREEN_TH and match(s, "summon_30_btn")[0] >= SCREEN_TH):
+        print("소환 화면이 아닙니다. 게임에서 소환 화면(30회 버튼이 보이는 화면)을 띄운 뒤 다시 실행하세요.")
+        return 1
+    gem = match_in(s, _grow(GEM_COST_ROI, COST_MARGIN), "summon_cost_gem")[0]
+    if gem >= GEM_COST_TH:
+        print(f"지금 30회 비용이 보석입니다 ({gem:.2f}). 뽑기권으로 30회를 뽑을 수 있는 상태에서 다시 실행하세요.")
+        return 1
+    x1, y1, x2, y2 = GEM_COST_ROI
+    p = os.path.join(TPL_DIR, TICKET_TPL + ".png")
+    cv2.imencode(".png", s[y1:y2, x1:x2])[1].tofile(p)
+    save_shot(s, "ticket_template_source")
+    print(f"저장했습니다: {p}\n  logs/ 의 ticket_template_source_*.png 로 비용이 뽑기권인 화면이었는지 확인하세요.")
+    return 0
+
+
+def init_adb():
+    global ADB, DEV
+    ADB = find_adb()
+    DEV = pick_serial()
+
+
 if __name__ == "__main__":
     ap = argparse.ArgumentParser(description="윈드러너 키우기 가이드 미션 자동 루프")
     ap.add_argument("--dry-run", action="store_true", help="판정만 출력하고 탭/ESC 하지 않음")
-    Bot(ap.parse_args().dry_run).run()
+    ap.add_argument("--save-ticket-template", action="store_true",
+                    help="지금 소환 화면의 30회 비용(뽑기권)을 뽑기권 템플릿으로 저장")
+    a = ap.parse_args()
+    init_adb()
+    if a.save_ticket_template:
+        try:
+            raise SystemExit(save_ticket_template())
+        except ResolutionError as e:
+            fatal(f"화면 크기가 {e} 입니다. MuMu 해상도를 900 x 1600 (세로) 로 바꾼 뒤 다시 실행하세요.")
+    Bot(a.dry_run).run()

@@ -79,20 +79,23 @@ def main():
     try:
         sys.path.insert(0, BASE)
         import guide_auto as ga
+        ga.init_adb()
         info += [f"ADB: {ga.ADB}", f"기기: {ga.DEV}"]
         try:
-            info.append("화면: " + ga.adb("shell", "wm", "size").decode().strip())
+            info.append("화면: " + ga.adb("shell", "wm", "size", retry=True).decode().strip())
         except Exception:
             pass
-        img = ga.screencap()
+        img = ga.screencap(check_size=False)
         import cv2
         shot_png = cv2.imencode(".png", img)[1].tobytes()
-        state = ga.read_screen(img)[0]
-        info.append(f"현재 화면 판정: {state}")
+        if (img.shape[1], img.shape[0]) == ga.SCREEN_SIZE:
+            info.append(f"현재 화면 판정: {ga.read_screen(img)[0]}")
+        else:
+            info.append(f"현재 화면 판정: 지원하지 않는 해상도 {img.shape[1]}x{img.shape[0]} (900x1600 필요)")
         info.append(f"설정: INTERVAL_SEC={ga.INTERVAL_SEC}, AFTER_SUMMON_WAIT_SEC={ga.AFTER_SUMMON_WAIT_SEC}, "
                     f"RETRY_ON_DEFEAT={ga.RETRY_ON_DEFEAT}, RETRY_LIMIT={ga.RETRY_LIMIT}")
     except SystemExit as e:
-        info.append(f"게임 화면 캡처 안 됨: {e}")
+        info.append(f"게임 화면 캡처 안 됨 (종료 코드 {e.code}, 위 안내 참고)")
     except Exception as e:
         info.append(f"게임 화면 캡처 안 됨: {e!r}")
 
