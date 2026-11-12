@@ -963,7 +963,12 @@ class Bot:
                     self.exit_pending = False
                     self.exit_fail = 0
                 return
-        s = self.look()
+        try:
+            s = self.look()
+        except ResolutionError:
+            if self.check_game_front():    # 게임이 꺼져 MuMu 홈 화면(가로)이 보임 → 해상도 안내 대신 게임 다시 실행
+                return
+            raise
         state, info = read_screen(s)
         self.check_stuck(state, s)
         self.check_update(state)
