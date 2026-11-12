@@ -51,7 +51,8 @@ GAME_PACKAGE = "net.lightcon.windidle"
 
 INTERVAL_SEC = 5             # 화면 인식 주기
 ACTION_INTERVAL_SEC = 3      # 방금 탭(수령 등)을 했으면 다음 확인을 더 빨리 (연속 클리어 대응)
-AFTER_SUMMON_WAIT_SEC = 10   # 30회 뽑기 후 대기 (오동작 방지)
+AFTER_SUMMON_WAIT_SEC = 10   # 30회 뽑기 후 연출이 끝나기를 기다리는 최대 시간 (이 동안은 패배 '재도전' 외에 누르지 않음)
+AFTER_SUMMON_MIN_SEC = 3     # 30회 뽑기 후 최소 대기. 이후 결과 화면('터치하여 닫기')이 보이면 바로 빠져나옴
 SUMMON_COOLDOWN_SEC = 15     # 뽑기 후 패널이 클리어로 바뀔 때까지 소환 미션 무시
 NO_TICKET_COOLDOWN_SEC = 60  # 소환 화면 비용이 보석(=이미 뽑음)일 때 다시 들어가지 않는 시간
 
@@ -800,6 +801,17 @@ class Bot:
         return s
 
     # 뽑기 -----------------------------------------------------------
+    def read_now(self, s=None):
+        """소환 흐름 중 화면 판정. 패배 창이 보이면 그 자리에서 바로 '재도전'.
+        패배 창은 10초 뒤 저절로 닫히고 이전 스테이지로 돌아가므로, 소환 화면을 오가는 동안에도 확인한다."""
+        state, info = read_screen(self.look() if s is None else s)
+        if state == "DEFEAT":
+            if self.last_state not in ("DEFEAT", "DEFEAT_LIMIT"):
+                log("상태: DEFEAT (소환 중)")
+                self.last_state = "DEFEAT"
+            self.on_defeat(info["tap"])
+        return state, info
+
     def escape_to_base(self):
         """뽑기 후 기본 화면까지 빠져나옴.
         결과창 → '터치하여 닫기' / '신규' 등 → 닫기 문구 위치 탭 / 소환 화면 → ESC.
@@ -807,8 +819,10 @@ class Bot:
         unknown = 0
         for _ in range(EXIT_MAX_STEPS):
             s = self.look()
-            state, info = read_screen(s)
-            if state == "SUMMON_RESULT":
+            state, info = self.read_now(s)
+            if state == "DEFEAT":         # read_now 가 재도전을 눌렀음 - 소환 화면이 남아 있을 수 있으니 계속 확인
+                unknown = 0
+            elif state == "SUMMON_RESULT":
                 self.tap(RESULT_CLOSE_TAP, "소환 결과 닫기")
                 unknown = 0
             elif state == "CLOSE_TEXT":
@@ -824,7 +838,7 @@ class Bot:
                     log("  ! 모르는 화면이 계속됨 - 화면 저장: " + save_shot(s, "unknown_after_summon"))
                     self.tap(RESULT_CLOSE_TAP, "하단 중앙 탭 (닫기 문구 기본 위치)")
                     unknown = 0
-            else:                      # 기본 화면 / 패배 화면
+            else:                      # 기본 화면
                 self.exit_pending = False
                 return True
             time.sleep(1.5)
@@ -837,7 +851,7 @@ class Bot:
         state = None
         while True:
             time.sleep(1.0)
-            state, info = read_screen(self.look())
+            state, info = self.read_now()
             if state in ("SUMMON_SCREEN", "SUMMON_RESULT", "CLOSE_TEXT"):
                 return state, info
             if time.time() >= deadline:
@@ -848,7 +862,7 @@ class Bot:
         for i in range(COST_CHECKS):
             if i:
                 time.sleep(0.5)
-                state, info = read_screen(self.look())
+                state, info = self.read_now()
                 if state != "SUMMON_SCREEN":
                     log(f"  ! 뽑기 직전 화면이 바뀜({state}) - 뽑지 않음")
                     return False
@@ -882,9 +896,20 @@ class Bot:
         self.tap(SUMMON_30_TAP, f"30회 뽑기 (뽑기권 확인: {info['cost_why']})")
         self.cnt["summon"] += 1
         self.summon_block_until = time.time() + SUMMON_COOLDOWN_SEC
-        log(f"  {AFTER_SUMMON_WAIT_SEC}초 대기 (오동작 방지)")
-        time.sleep(AFTER_SUMMON_WAIT_SEC)
+        self.wait_after_summon()
         self.escape_to_base()
+
+    def wait_after_summon(self):
+        """30회 탭 후 뽑기 연출을 기다림 (최소 AFTER_SUMMON_MIN_SEC, 최대 AFTER_SUMMON_WAIT_SEC).
+        이 동안 누르는 것은 패배 창의 '재도전'뿐. 결과 화면이 뜨면 바로 빠져나오기 시작해서
+        소환 화면에 머무는 시간을 줄인다 (그동안 뒤에서 진 전투의 패배 창은 10초 뒤 저절로 닫힘)."""
+        start = time.time()
+        log(f"  뽑기 연출 대기 (최대 {AFTER_SUMMON_WAIT_SEC}초, 패배 창만 확인)")
+        while time.time() - start < AFTER_SUMMON_WAIT_SEC:
+            time.sleep(1.0)
+            state, _ = self.read_now()
+            if state in ("SUMMON_RESULT", "CLOSE_TEXT") and time.time() - start >= AFTER_SUMMON_MIN_SEC:
+                return
 
     # 패배 -----------------------------------------------------------
     def on_defeat(self, xy):
