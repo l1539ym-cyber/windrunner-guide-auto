@@ -133,7 +133,10 @@ SUMMON_BTN_ROI = (580, 1048, 800, 1170)   # 소환 화면 '30회' 버튼 (SUMMON
 RESULT_CLOSE_TAP = (450, 1487)         # 소환 결과 '터치하여 닫기' (결과 화면은 ESC 무반응)
 ESC_SETTLE_SEC = 3.0                   # ESC 후 화면 전환 대기 (연속 ESC 방지)
 EXIT_MAX_STEPS = 20                    # 뽑기 후 기본 화면 복귀 시도 횟수 (1.5초 간격)
-UNKNOWN_FALLBACK = 5                   # 복귀 중 모르는 화면이 이만큼 연속되면 하단 중앙 한 번 탭
+UNKNOWN_FALLBACK = 5                   # 복귀 중 모르는 화면이 이만큼 연속되면 ESC 한 번 (아무 곳이나 누르지 않음)
+CLEAR_CONFIRM_SEC = 0.7                # 클리어 판정 후 이만큼 뒤에 다시 확인해서 그대로일 때만 수령 탭
+POST_TAP_WATCH_SEC = 20                # 패널(클리어·반복) 탭 후 이 시간 안에 소환 화면이 뜨면 봇이 연 것으로 보고 복귀
+SUMMON_IDLE_SEC = 90                   # 같은 소환 화면/결과 화면이 이 시간 넘게 계속되면 기본 화면으로 복귀
 SCREEN_SIZE = (900, 1600)              # 지원 해상도 (가로, 세로). 다르면 아무것도 누르지 않고 대기
 BAD_RES_WAIT_SEC = 30                  # 해상도가 다를 때 다시 확인 간격(초)
 MAX_SAVED_SHOTS = 100                  # logs/ 에 남기는 화면 캡처 최대 개수 (오래된 것부터 삭제)
@@ -768,6 +771,9 @@ class Bot:
         self.stuck_escaped = False
         self.next_update_check = time.time() + UPDATE_CHECK_HOURS * 3600   # 시작 때는 run.py 가 확인함
         self.bad_res = None              # 지원하지 않는 해상도를 본 경우 그 크기 (안내 한 번만)
+        self.panel_tap_at = 0            # 마지막으로 패널(클리어·반복)을 누른 시각
+        self.summon_state = None         # 계속 보고 있는 소환 화면 상태 (SUMMON_SCREEN / SUMMON_RESULT)
+        self.summon_since = 0
 
     # 입력 -----------------------------------------------------------
     def tap(self, xy, why):
@@ -815,8 +821,11 @@ class Bot:
     def escape_to_base(self):
         """뽑기 후 기본 화면까지 빠져나옴.
         결과창 → '터치하여 닫기' / '신규' 등 → 닫기 문구 위치 탭 / 소환 화면 → ESC.
+        모르는 화면이 계속되면 ESC 한 번 (채팅창·메뉴 닫기). 위치를 짐작해서 누르지 않음
+        (하단 중앙은 기본 화면 메뉴 버튼이라 메뉴·캐릭터 목록 등을 열 수 있음).
         기본 화면에서는 ESC 를 보내지 않음 (종료창 위험)."""
         unknown = 0
+        fallback_used = False
         for _ in range(EXIT_MAX_STEPS):
             s = self.look()
             state, info = self.read_now(s)
@@ -834,10 +843,11 @@ class Bot:
                 time.sleep(ESC_SETTLE_SEC)
             elif state == "OTHER":
                 unknown += 1           # 전환 애니메이션일 수 있음 - 다시 확인
-                if unknown == UNKNOWN_FALLBACK:
+                if unknown == UNKNOWN_FALLBACK and not fallback_used:
                     log("  ! 모르는 화면이 계속됨 - 화면 저장: " + save_shot(s, "unknown_after_summon"))
-                    self.tap(RESULT_CLOSE_TAP, "하단 중앙 탭 (닫기 문구 기본 위치)")
-                    unknown = 0
+                    self.esc("모르는 화면 닫기 (뒤로 가기)")
+                    fallback_used = True
+                    time.sleep(ESC_SETTLE_SEC)
             else:                      # 기본 화면
                 self.exit_pending = False
                 return True
@@ -1012,6 +1022,31 @@ class Bot:
             self.esc("멈춘 화면 닫기")
             self.stuck_escaped = True      # 같은 화면에서는 한 번만
 
+    def check_summon_screen(self, state):
+        """소환 화면/결과 화면 처리. 봇이 복귀를 시작했으면 True.
+        ① 봇이 패널(클리어·반복)을 누른 직후 열린 소환 화면 = 봇이 잘못 연 것 → 뽑지 않고 바로 복귀
+        ② 같은 소환 화면이 SUMMON_IDLE_SEC 넘게 그대로 = 아무도 조작하지 않음 → 복귀
+           (그대로 두면 게임이 절전 잠금 화면으로 바뀌고, 그동안 미션 진행이 멈춤)"""
+        if state not in ("SUMMON_SCREEN", "SUMMON_RESULT"):
+            self.summon_state = None
+            return False
+        now = time.time()
+        if state != self.summon_state:
+            self.summon_state, self.summon_since = state, now
+        why = None
+        if now - self.panel_tap_at <= POST_TAP_WATCH_SEC:
+            why = "패널을 누른 직후 소환 화면이 열림 (다음 미션이 눌린 것으로 판단)"
+        elif now - self.summon_since > SUMMON_IDLE_SEC:
+            why = f"소환 화면이 {SUMMON_IDLE_SEC}초 넘게 그대로 (조작 없음)"
+        if not why or self.dry:
+            return False
+        log(f"  ! {why} - 뽑지 않고 기본 화면으로 복귀")
+        self.panel_tap_at = 0
+        self.summon_state = None
+        self.exit_pending = True
+        self.escape_to_base()
+        return True
+
     def check_update(self, state):
         """UPDATE_CHECK_HOURS 마다 새 버전 확인. 있으면 기본 화면일 때(뽑기 등 동작 중이 아닐 때) 종료 코드 3 으로
         끝내서 run.py 가 업데이트 후 다시 실행하게 함"""
@@ -1073,11 +1108,15 @@ class Bot:
         else:
             self.other_since = None
 
+        if self.check_summon_screen(state):
+            return
+
         if state == "DEFEAT":
             self.on_defeat(info["tap"])
         elif state == "REPEAT":
             # [반복] 은 '소환' 문구여도 탭만 하면 모험 코인 지급 → 절대 뽑기 하지 않음
             self.tap(info["tap"], "[반복] 미션 수령 (모험 코인)")
+            self.panel_tap_at = time.time()
             self.cnt["repeat"] += 1
             if not self.dry:
                 time.sleep(1.5)
@@ -1086,7 +1125,17 @@ class Bot:
                     self.exit_pending = True
                     self.escape_to_base()
         elif state == "GUIDE_CLEAR":
+            if not self.dry:
+                # 수령 직후 다음 미션으로 바뀌는 연출 중에 클리어로 잘못 보고 누르면 다음 미션(소환 등)이 열림
+                # → 잠시 뒤 다시 봐도 클리어일 때만 누름
+                time.sleep(CLEAR_CONFIRM_SEC)
+                state2, info2 = read_screen(self.look())
+                if state2 != "GUIDE_CLEAR":
+                    log(f"  클리어 재확인 실패({state2}) - 이번에는 누르지 않음")
+                    return
+                info = info2
             self.tap(info["tap"], f"가이드 클리어 → 보상 수령 ({info['why']})")
+            self.panel_tap_at = time.time()
             self.cnt["guide"] += 1
             self.summon_block_until = 0
         elif state == "GUIDE_SUMMON":
