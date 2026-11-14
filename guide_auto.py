@@ -3,7 +3,7 @@
 5초마다 화면을 캡처해서 상태를 인식하고 아래 조건대로 행동한다.
 
   if   MuMu 창 최소화                  → 일시정지 (복원되면 재개)
-  elif 패배 화면 ('Defeat' + 재도전)   → '재도전' 탭 (연속 패배 시 제한)
+  elif 패배 화면 ('Defeat' + 재도전)   → '재도전' 탭 (기본: 횟수 제한 없음)
   elif 기본 화면 (채팅 아이콘 + 상단·좌우 UI 가 보이는 전투 화면)
        if   [반복] 패널               → 패널 탭 (모험 코인 즉시 수령, 뽑기 안 함)
        elif [가이드] 클리어 (초록 진행도) → 패널 탭 (보상 수령)
@@ -57,7 +57,8 @@ SUMMON_COOLDOWN_SEC = 15     # 뽑기 후 패널이 클리어로 바뀔 때까�
 NO_TICKET_COOLDOWN_SEC = 60  # 소환 화면 비용이 보석(=이미 뽑음)일 때 다시 들어가지 않는 시간
 
 RETRY_ON_DEFEAT = True       # 패배 시 '재도전' 누르기
-RETRY_LIMIT = 3              # RETRY_WINDOW_SEC 안에 이만큼 패배하면 더 누르지 않음 (게임이 이전 스테이지로 자동 복귀)
+RETRY_LIMIT = 0              # 0 = 무제한 (운이 좋으면 깨질 수 있으므로 계속 재도전).
+                             # 1 이상이면 RETRY_WINDOW_SEC 안에 이만큼 재도전한 뒤에는 누르지 않음 (게임이 이전 스테이지로 자동 복귀)
 RETRY_WINDOW_SEC = 600
 
 # ---- 자동 복구 (오류가 나면 스스로 해결) ----
@@ -927,13 +928,15 @@ class Bot:
         self.defeats = [t for t in self.defeats if now - t < RETRY_WINDOW_SEC]
         if not RETRY_ON_DEFEAT:
             return
-        if len(self.defeats) >= RETRY_LIMIT:
+        if RETRY_LIMIT and len(self.defeats) >= RETRY_LIMIT:
             if self.last_state != "DEFEAT_LIMIT":
                 log(f"  ! {RETRY_WINDOW_SEC // 60}분 안에 {RETRY_LIMIT}번 패배 - 재도전 안 함 (게임이 이전 스테이지로 자동 복귀)")
             self.last_state = "DEFEAT_LIMIT"
             return
         self.defeats.append(now)
-        self.tap(xy, f"패배 → 재도전 ({len(self.defeats)}/{RETRY_LIMIT})")
+        count = (f"{len(self.defeats)}/{RETRY_LIMIT}" if RETRY_LIMIT
+                 else f"무제한, 최근 {RETRY_WINDOW_SEC // 60}분 {len(self.defeats)}회째")
+        self.tap(xy, f"패배 → 재도전 ({count})")
         self.cnt["retry"] += 1
         time.sleep(2)
 
