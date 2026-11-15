@@ -5,6 +5,8 @@ import numpy as np
 
 import guide_auto as g
 
+g.load_mode = lambda: "idle"     # 폴더의 mode.txt 와 상관없이 방치 모드로 점검
+
 
 # ---- 가짜 화면 ----
 def blank():

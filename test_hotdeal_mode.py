@@ -12,6 +12,9 @@ import numpy as np
 
 import guide_auto as g
 
+REAL_LOAD_MODE = g.load_mode
+g.load_mode = lambda: "idle"     # 폴더의 mode.txt 와 상관없이 방치 모드로 점검
+
 
 # ---- 가짜 화면 ----
 def blank(color=(40, 70, 110)):
@@ -153,9 +156,24 @@ for _ in range(10):
     clock.t += g.INTERVAL_SEC
 assert len(taps) == 10, taps
 
+# 7) 소환권 보상 미션 클리어: 분홍이 아니라 흰 얇은 테두리선 → 클리어로 인식, 선이 없으면 진행 중
+def guide_panel(outline):
+    s = base_screen()
+    s[1145:1258, 238:665] = (60, 50, 45)                      # 어두운 반투명 패널
+    paste(s, "guide_label_orange", 345, 1162)
+    if outline:
+        cv2.rectangle(s, (240, 1146), (662, 1254), (235, 240, 245), 2)   # 흰 테두리선
+    return s
+
+
+st, info = g.read_screen(guide_panel(True))
+assert st == "GUIDE_CLEAR" and "테두리선" in info["why"], (st, info)
+assert g.read_screen(guide_panel(False))[0] == "GUIDE_PROGRESS"
+
 # 6) mode.txt 저장/읽기
 d = tempfile.mkdtemp()
 g.MODE_FILE = os.path.join(d, "mode.txt")
+g.load_mode = REAL_LOAD_MODE
 assert g.load_mode() == g.DEFAULT_MODE
 g.save_mode("clear")
 assert g.load_mode() == "clear"

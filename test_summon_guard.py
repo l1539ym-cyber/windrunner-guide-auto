@@ -4,6 +4,8 @@
 메뉴·캐릭터 목록·강화 화면이 열림. 화면 판정은 각본대로 돌려주고 (가짜 시계, 실제 입력 없음) 봇의 행동만 확인한다."""
 import guide_auto as g
 
+g.load_mode = lambda: "idle"     # 폴더의 mode.txt 와 상관없이 방치 모드로 점검
+
 STATES = {
     "클리어": ("GUIDE_CLEAR", {"tap": (490, 1201), "why": "test"}),
     "소환미션": ("GUIDE_SUMMON", {"tap": (490, 1201)}),

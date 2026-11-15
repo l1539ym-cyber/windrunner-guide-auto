@@ -85,6 +85,9 @@ REPEAT_LABEL_TH = 0.45   # "[반복]" 하늘색 글자 (패널 0.49~1.00 / 그 �
 CLEAR_GREEN_PX = 200     # 클리어 판정 ①: 진행도 "(30/30)" 초록 글자 픽셀 수 (클리어 ≈810 / 진행 중 0)
 BORDER_PINK_TH = 0.30    # 클리어 판정 ②: 패널 왼쪽·오른쪽·아래 테두리의 밝은 분홍 비율 합 (클리어 0.72~2.3 / 진행 중 0.00)
                          #   진행도 숫자가 없는 미션(예: "모험 챕터 476-15 클리어")용. '+N' 표시가 없을 때도 있어 테두리로 판정
+OUTLINE_TH = 0.35        # 클리어 판정 ④: 패널 가장자리의 얇은 밝은 선 (색 무관). 왼쪽·오른쪽·아래 중 가장 많이 이어진 변의 비율
+                         #   보상이 소환권(빨강·노랑·초록)이면 테두리가 분홍이 아니라 흰색이고 배경에 소환권 무늬가 깔림
+                         #   (소환권 클리어 0.45~1.00, 테두리가 깜빡여서 프레임마다 다름 / 진행 중 0.00~0.22)
 BADGE_RED_PX = 600       # 클리어 판정 ③: 패널 오른쪽 위 빨간 "+N" 표시 (클리어 1083~1636 / 진행 중 0)
 BADGE_WHITE_PX = 30      #   + 그 안의 흰 글자 "+N" (클리어 60~204)
 SUMMON_WORD_TH = 0.75    # 문구 속 '소환' 흰 글자 (소환 0.86~1.00 / 그 외 ≤0.63)
@@ -117,6 +120,12 @@ BADGE_ROI = (598, 1136, 670, 1176)     # 패널 오른쪽 위 "+N" 표시
 BORDER_ROIS = [(236, 1165, 250, 1235),  # 패널 왼쪽 테두리
                (652, 1170, 666, 1235),  # 패널 오른쪽 테두리
                (270, 1248, 620, 1260)]  # 패널 아래 테두리
+# 패널 가장자리 선 (선 후보 / 안쪽 / 바깥쪽): 선이 양쪽보다 30 이상 밝고 V≥190 이면 그 자리에 선이 있음
+OUTLINE_SIDES = {
+    "아래": ("h", (280, 620), (1248, 1261), (1236, 1243), (1266, 1273)),
+    "왼쪽": ("v", (1170, 1230), (232, 247), (252, 259), (220, 227)),
+    "오른쪽": ("v", (1170, 1230), (652, 668), (640, 647), (674, 681)),
+}
 SUMMON_WORD_OFF = (-7, 31, 253, 86)    # 라벨 기준 미션 문구 영역 ('소환' 글자 탐색)
 PANEL_TAP_OFF = (143, 37)              # 라벨 좌상단 → 패널 탭 위치
 GEM_COST_ROI = (570, 1125, 650, 1185)  # 소환 화면 30회 버튼 비용 아이콘
@@ -629,6 +638,25 @@ def border_pink(s):
     return total
 
 
+def panel_outline(s):
+    """클리어 패널의 얇은 밝은 테두리선 (색 무관) → (가장 많이 이어진 변의 비율, 변 이름)"""
+    v = cv2.cvtColor(s, cv2.COLOR_BGR2HSV)[..., 2].astype(np.int16)
+    best = (0.0, "")
+    for name, (kind, (a1, a2), line, inn, out) in OUTLINE_SIDES.items():
+        if kind == "h":      # 가로 변: 열마다 선 후보 줄의 최대 밝기 vs 안쪽·바깥쪽 평균
+            ln = v[line[0]:line[1], a1:a2].max(0)
+            i = v[inn[0]:inn[1], a1:a2].mean(0)
+            o = v[out[0]:out[1], a1:a2].mean(0)
+        else:                # 세로 변
+            ln = v[a1:a2, line[0]:line[1]].max(1)
+            i = v[a1:a2, inn[0]:inn[1]].mean(1)
+            o = v[a1:a2, out[0]:out[1]].mean(1)
+        r = float(((ln >= 190) & (ln - i >= 30) & (ln - o >= 30)).mean())
+        if r > best[0]:
+            best = (r, name)
+    return best
+
+
 def read_panel(s):
     """기본 화면 중앙 하단 미션 패널 판정"""
     g, (lx, ly) = mask_match(s, LABEL_ROI, "guide_label_orange", ORANGE)
@@ -645,6 +673,9 @@ def read_panel(s):
     border = border_pink(s)
     if border >= BORDER_PINK_TH:                           # 챕터 클리어 등 진행도 숫자가 없는 미션
         return "GUIDE_CLEAR", {"tap": tap_xy, "why": f"분홍 테두리 {border:.2f}"}
+    outline, side = panel_outline(s)
+    if outline >= OUTLINE_TH:                              # 소환권 보상 미션 클리어 (흰 테두리 + 소환권 무늬)
+        return "GUIDE_CLEAR", {"tap": tap_xy, "why": f"밝은 테두리선 {side} {outline:.2f}"}
     red, white = badge_pixels(s)
     if red >= BADGE_RED_PX and white >= BADGE_WHITE_PX:
         return "GUIDE_CLEAR", {"tap": tap_xy, "why": f"+N 표시 빨강 {red}px"}
