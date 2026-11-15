@@ -6,6 +6,7 @@ logs/
 # 사용자별 파일 (자동 업데이트가 덮어쓰지 않음)
 .version
 user_settings.py
+mode.txt
 
 # Python
 __pycache__/

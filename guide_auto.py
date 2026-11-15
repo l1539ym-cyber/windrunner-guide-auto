@@ -142,6 +142,32 @@ SCREEN_SIZE = (900, 1600)              # 지원 해상도 (가로, 세로). 다�
 BAD_RES_WAIT_SEC = 30                  # 해상도가 다를 때 다시 확인 간격(초)
 MAX_SAVED_SHOTS = 100                  # logs/ 에 남기는 화면 캡처 최대 개수 (오래된 것부터 삭제)
 
+# ---- 핫딜 팝업 ("핫딜! ○○ N성 지원 패키지" 유료 상품 권유) ----
+# 캐릭터·성급·가격은 매번 다르므로 공통 요소 4가지가 모두 보일 때만 핫딜로 본다 (실측: 핫딜 1.00 / 그 외 괄호)
+HOTDEAL_TITLE_ROI = (0, 560, 900, 800)     # 제목 줄 (이름 길이에 따라 글자가 좌우로 움직이므로 가로 전체 탐색)
+HOTDEAL_WORD_TH = 0.70                     # "핫딜!" 흰 글자 (≤0.42)
+HOTDEAL_PKG_TH = 0.70                      # "지원 패키지" 흰 글자 (≤0.35)
+HOTDEAL_TIMER_ROI = (150, 680, 750, 790)   # 남은시간 시계 아이콘
+HOTDEAL_TIMER_TH = 0.70                    # 파란 시계 아이콘 (≤0.37)
+HOTDEAL_BTN_ROI = (200, 880, 700, 1120)    # 파란 구매 버튼
+HOTDEAL_WON_TH = 0.85                      # 버튼 속 "₩" 흰 글자 (≤0.72)
+HOTDEAL_BTN_BLUE_PX = 4000                 # 버튼 파란 픽셀 수 (핫딜 9300~12260, 빛나는 연출에 따라 변함)
+HOTDEAL_CLOSE_TAP = (490, 1201)            # 팝업 바깥 = 가이드 클리어 수령 때 누르는 자리 (구매 버튼과 떨어져 있음)
+HOTDEAL_BTN_MARGIN = 40                    # 탭 위치가 구매 버튼에서 이만큼 안쪽으로 가까우면 절대 누르지 않음
+HOTDEAL_VERIFY_SEC = 6                     # 탭 후 기본 화면으로 돌아왔는지 확인하는 시간
+
+# ---- 모드: 돌파 버튼 ----
+# "idle"  (방치) : 돌파 버튼을 누르지 않음 → 지금 스테이지에 머물며 방치
+# "clear" (클리어): 돌파 버튼이 보이면 계속 누름 (패배하면 재도전도 계속)
+# 실행 중 검은 창에서 C / I 키로 바꿀 수 있고, 고른 모드는 mode.txt 에 저장돼 다시 시작해도 유지된다
+DEFAULT_MODE = "idle"
+BREAK_ROI = (330, 240, 570, 420)           # 챕터 표시 아래 돌파 버튼 자리
+BREAK_TEXT_TH = 0.80                       # "돌파" 흰 글자, 여러 배율 (버튼 0.85~1.00 / 그 외 ≤0.72)
+BREAK_SCALES = tuple(round(0.80 + 0.05 * i, 2) for i in range(11))   # 버튼이 커졌다 작아지는 연출 대응
+                                           #   크게 빛나는 순간에는 못 찾을 수 있음 → 다음 주기에 다시 확인
+BREAK_PINK_ROI = (400, 265, 500, 385)      # 버튼 분홍 원 (보스 체력바가 있으면 버튼이 약 35px 아래)
+BREAK_PINK_PX = 600                        # 분홍 픽셀 수 (버튼 1063~2388)
+
 # ---- 자동 업데이트 ----
 AUTO_UPDATE = True           # GitHub 에 새 버전이 올라오면 자동으로 받아서 다시 시작
 UPDATE_CHECK_HOURS = 1       # 실행 중 새 버전 확인 주기 (시간). 시작할 때는 항상 확인
@@ -639,6 +665,83 @@ def is_summon_screen(s):
             and match_in(s, SUMMON_BTN_ROI, "summon_30_btn")[0] >= SUMMON_BTN_TH)
 
 
+def _blue_mask(img):
+    """핫딜 팝업의 파란색 (구매 버튼, 시계 아이콘)"""
+    hsv = cv2.cvtColor(img, cv2.COLOR_BGR2HSV)
+    h = hsv[..., 0]
+    return (((h >= 95) & (h <= 110) & (hsv[..., 1] > 150) & (hsv[..., 2] > 180)) * 255).astype(np.uint8)
+
+
+def _soft_white(img):
+    return cv2.GaussianBlur(white_mask(img), (5, 5), 0)
+
+
+def _feat(s, roi, name, fn):
+    x1, y1, x2, y2 = roi
+    return cv2.minMaxLoc(cv2.matchTemplate(fn(s[y1:y2, x1:x2]), fn(T("hotdeal/" + name)),
+                                           cv2.TM_CCOEFF_NORMED))[1]
+
+
+def hotdeal_scores(s):
+    """핫딜 팝업 요소별 점수 + 구매 버튼 영역"""
+    x1, y1, x2, y2 = HOTDEAL_BTN_ROI
+    blue = _blue_mask(s[y1:y2, x1:x2])
+    ys, xs = np.nonzero(blue)
+    btn = (int(xs.min()) + x1, int(ys.min()) + y1, int(xs.max()) + x1, int(ys.max()) + y1) if len(xs) else None
+    return {"word": _feat(s, HOTDEAL_TITLE_ROI, "hotdeal_word", _soft_white),
+            "pkg": _feat(s, HOTDEAL_TITLE_ROI, "support_package", _soft_white),
+            "timer": _feat(s, HOTDEAL_TIMER_ROI, "timer_clock", _blue_mask),
+            "won": _feat(s, HOTDEAL_BTN_ROI, "won_sign", _soft_white),
+            "blue": int((blue > 0).sum()), "btn": btn}
+
+
+def is_hotdeal(s):
+    """→ None 또는 {"tap", "btn", "why"}"""
+    sc = hotdeal_scores(s)
+    if not (sc["word"] >= HOTDEAL_WORD_TH and sc["pkg"] >= HOTDEAL_PKG_TH and sc["timer"] >= HOTDEAL_TIMER_TH
+            and sc["won"] >= HOTDEAL_WON_TH and sc["blue"] >= HOTDEAL_BTN_BLUE_PX):
+        return None
+    why = (f"핫딜 {sc['word']:.2f} / 지원 패키지 {sc['pkg']:.2f} / 시계 {sc['timer']:.2f} / "
+           f"₩ {sc['won']:.2f} / 버튼 파랑 {sc['blue']}px")
+    return {"tap": HOTDEAL_CLOSE_TAP, "btn": sc["btn"], "why": why}
+
+
+def tap_hits_button(xy, btn, margin=HOTDEAL_BTN_MARGIN):
+    """탭 위치가 구매 버튼(+여유) 안이면 True → 절대 누르지 않음"""
+    if btn is None:
+        return False
+    x, y = xy
+    return btn[0] - margin <= x <= btn[2] + margin and btn[1] - margin <= y <= btn[3] + margin
+
+
+_break_tpls = None
+
+
+def find_breakthrough(s):
+    """기본 화면의 '돌파' 버튼 → None 또는 {"tap", "why"}"""
+    global _break_tpls
+    if _break_tpls is None:
+        t = _soft_white(T("breakthrough_text"))
+        _break_tpls = [(k, cv2.resize(t, None, fx=k, fy=k)) for k in BREAK_SCALES]
+    x1, y1, x2, y2 = BREAK_PINK_ROI
+    hsv = cv2.cvtColor(s[y1:y2, x1:x2], cv2.COLOR_BGR2HSV)
+    h = hsv[..., 0]
+    pink = int(((h >= 145) & (h <= 172) & (hsv[..., 1] > 120) & (hsv[..., 2] > 180)).sum())
+    if pink < BREAK_PINK_PX:
+        return None
+    x1, y1, x2, y2 = BREAK_ROI
+    r = _soft_white(s[y1:y2, x1:x2])
+    best = (0, None)
+    for k, t in _break_tpls:
+        _, sc, _, (x, y) = cv2.minMaxLoc(cv2.matchTemplate(r, t, cv2.TM_CCOEFF_NORMED))
+        if sc > best[0]:
+            best = (sc, (x + x1 + t.shape[1] // 2, y + y1 + t.shape[0] // 2))
+    if best[0] < BREAK_TEXT_TH:
+        return None
+    tx, ty = best[1]
+    return {"tap": (tx, ty - 35), "why": f"'돌파' 글자 {best[0]:.2f} / 분홍 {pink}px"}   # 글자 위 원을 탭
+
+
 def read_screen(s):
     """현재 화면 상태 판별 → (state, info)"""
     # 1) 패배 (기본 화면 위에 겹쳐 뜸)
@@ -647,6 +750,10 @@ def read_screen(s):
         if sc >= DEFEAT_TH:
             h, w = T("defeat_retry_btn").shape[:2]
             return "DEFEAT", {"tap": (x + w // 2, y + h // 2)}
+    # 1-2) 핫딜 팝업 (기본 화면 위에 겹쳐 뜸. 뒤 화면의 UI 가 비쳐서 기본 화면으로 잘못 볼 수 있으므로 먼저 확인)
+    hd = is_hotdeal(s)
+    if hd:
+        return "HOTDEAL", hd
     # 2) 소환 결과 / 소환 화면
     if match(s, "summon_result_close")[0] >= SCREEN_TH:
         return "SUMMON_RESULT", {}
@@ -749,6 +856,46 @@ def save_shot(img, tag):
     return p
 
 
+# ------------------------------ 모드 ------------------------------
+MODE_FILE = os.path.join(BASE, "mode.txt")   # 자동 업데이트가 덮어쓰지 않음 (updater.KEEP)
+MODE_NAMES = {"clear": "클리어 (돌파 누름)", "idle": "방치 (돌파 안 누름)"}
+
+
+def load_mode():
+    try:
+        with open(MODE_FILE, encoding="utf-8") as f:
+            m = f.read().strip().lower()
+        if m in MODE_NAMES:
+            return m
+    except OSError:
+        pass
+    return DEFAULT_MODE if DEFAULT_MODE in MODE_NAMES else "idle"
+
+
+def save_mode(m):
+    try:
+        with open(MODE_FILE, "w", encoding="utf-8") as f:
+            f.write(m + "\n")
+    except OSError:
+        pass
+
+
+def read_mode_key():
+    """검은 창에서 누른 키 → 'clear' / 'idle' / None (Windows 콘솔에서만)"""
+    try:
+        import msvcrt
+    except ImportError:
+        return None
+    m = None
+    while msvcrt.kbhit():
+        ch = msvcrt.getwch().lower()
+        if ch in ("c", "ㅊ"):
+            m = "clear"
+        elif ch in ("i", "ㅑ"):
+            m = "idle"
+    return m
+
+
 # ------------------------------ 동작 ------------------------------
 class Bot:
     def __init__(self, dry):
@@ -775,6 +922,11 @@ class Bot:
         self.panel_tap_at = 0            # 마지막으로 패널(클리어·반복)을 누른 시각
         self.summon_state = None         # 계속 보고 있는 소환 화면 상태 (SUMMON_SCREEN / SUMMON_RESULT)
         self.summon_since = 0
+        self.hotdeal_tries = 0           # 지금 핫딜 팝업에서 닫기 탭을 한 횟수 (0 = 새 팝업)
+        self.hotdeal_failed = False      # 이번 팝업에서 이미 실패 캡처를 저장했음 (한 장만)
+        self.mode = load_mode()
+        self.cnt["breakthrough"] = 0
+        self.cnt["hotdeal"] = 0
 
     # 입력 -----------------------------------------------------------
     def tap(self, xy, why):
@@ -831,6 +983,9 @@ class Bot:
             s = self.look()
             state, info = self.read_now(s)
             if state == "DEFEAT":         # read_now 가 재도전을 눌렀음 - 소환 화면이 남아 있을 수 있으니 계속 확인
+                unknown = 0
+            elif state == "HOTDEAL":      # 뽑기로 보유 수가 늘어 핫딜 팝업이 뜸
+                self.on_hotdeal(s, info)
                 unknown = 0
             elif state == "SUMMON_RESULT":
                 self.tap(RESULT_CLOSE_TAP, "소환 결과 닫기")
@@ -939,6 +1094,45 @@ class Bot:
         self.tap(xy, f"패배 → 재도전 ({count})")
         self.cnt["retry"] += 1
         time.sleep(2)
+
+    # 핫딜 팝업 ---------------------------------------------------------
+    def on_hotdeal(self, s, info):
+        """핫딜 팝업 닫기: 팝업 바깥(가이드 수령 자리)을 탭하고 기본 화면으로 돌아왔는지 확인.
+        새 팝업이면 탭하기 전 화면을 한 장 저장. 실패하면 오류 화면도 한 장만 저장하고,
+        그 뒤로는 캡처 없이 다음 주기마다 다시 탭하며 기본 화면 복귀를 계속 감시한다 (봇은 멈추지 않음).
+        핫딜은 몇 시간 뒤 저절로 사라진다."""
+        if tap_hits_button(info["tap"], info["btn"]):
+            if not self.hotdeal_failed:
+                log(f"  [핫딜 오류] 닫기 위치 {info['tap']} 가 구매 버튼 {info['btn']} 근처라 누르지 않음 - "
+                    "화면 저장: " + save_shot(s, "hotdeal_error"))
+                self.hotdeal_failed = True
+            return
+        if self.hotdeal_tries == 0:
+            log(f"  [핫딜] 팝업 발견 ({info['why']}, 구매 버튼 {info['btn']}) - 화면 저장: " + save_shot(s, "hotdeal"))
+        self.hotdeal_tries += 1
+        self.tap(info["tap"], f"핫딜 팝업 닫기 (팝업 바깥, {self.hotdeal_tries}번째)")
+        if self.dry:
+            return
+        deadline = time.time() + HOTDEAL_VERIFY_SEC
+        state = None
+        while time.time() < deadline:
+            time.sleep(1.0)
+            s2 = self.look()
+            state, _ = read_screen(s2)
+            if state in BASE_STATES:
+                self.hotdeal_done(state)
+                return
+        if not self.hotdeal_failed:
+            log(f"  [핫딜 오류] 탭 후 {HOTDEAL_VERIFY_SEC}초 안에 기본 화면으로 돌아오지 않음({state}) - "
+                "화면 저장: " + save_shot(s2, "hotdeal_error") + " (다음 주기마다 계속 시도, 캡처는 더 남기지 않음)")
+            self.hotdeal_failed = True
+
+    def hotdeal_done(self, state):
+        log(f"  [핫딜] 기본 화면 복귀 확인 ({state}, 탭 {self.hotdeal_tries}번" +
+            (", 실패 후 복귀" if self.hotdeal_failed else "") + ")")
+        self.cnt["hotdeal"] += 1
+        self.hotdeal_tries = 0
+        self.hotdeal_failed = False
 
     # 한 주기 ---------------------------------------------------------
     # 자동 복구 ---------------------------------------------------------
@@ -1114,8 +1308,13 @@ class Bot:
         if self.check_summon_screen(state):
             return
 
+        if self.hotdeal_tries and state in BASE_STATES:   # 실패 후 감시 중이던 핫딜이 닫힘 (만료 등)
+            self.hotdeal_done(state)
+
         if state == "DEFEAT":
             self.on_defeat(info["tap"])
+        elif state == "HOTDEAL":
+            self.on_hotdeal(s, info)
         elif state == "REPEAT":
             # [반복] 은 '소환' 문구여도 탭만 하면 모험 코인 지급 → 절대 뽑기 하지 않음
             self.tap(info["tap"], "[반복] 미션 수령 (모험 코인)")
@@ -1145,6 +1344,12 @@ class Bot:
             if time.time() < self.summon_block_until:
                 return
             self.do_summon(info["tap"])
+        elif state in ("GUIDE_PROGRESS", "BASE_NO_PANEL") and self.mode == "clear":
+            # 클리어 모드: 수령할 미션이 없는 기본 화면에서 돌파 버튼이 보이면 누름 (실패해도 계속)
+            bt = find_breakthrough(s)
+            if bt:
+                self.tap(bt["tap"], f"[클리어 모드] 돌파 ({bt['why']})")
+                self.cnt["breakthrough"] += 1
         # 그 외 (GUIDE_PROGRESS / BASE_NO_PANEL / 채팅·길드·상점 등 OTHER / 사용자가 연 소환·결과 화면)
         # → 아무것도 누르지 않고 다음 주기까지 대기
 
@@ -1163,8 +1368,33 @@ class Bot:
         self.last_state = None
         return BAD_RES_WAIT_SEC
 
+    def set_mode(self, m, why):
+        if m != self.mode:
+            self.mode = m
+            save_mode(m)
+            log(f"[모드] {MODE_NAMES[m]} 로 변경 ({why})")
+
+    def check_mode(self):
+        """키 입력(C/I) 또는 mode.txt 수정으로 모드 변경"""
+        k = read_mode_key()
+        if k:
+            self.set_mode(k, "키 입력")
+        else:
+            m = load_mode()
+            if m != self.mode:
+                self.mode = m
+                log(f"[모드] {MODE_NAMES[m]} 로 변경 (mode.txt)")
+
+    def sleep(self, sec):
+        """대기하면서 모드 전환 키를 바로 반영"""
+        end = time.time() + sec
+        while time.time() < end:
+            self.check_mode()
+            time.sleep(min(0.2, max(0, end - time.time())))
+
     def run(self):
         log(f"시작 - 기기 {DEV}, {INTERVAL_SEC}초 주기" + (" (dry-run)" if self.dry else ""))
+        log(f"[모드] {MODE_NAMES[self.mode]}  - 바꾸려면 이 창에서 C(클리어) / I(방치) 키")
         try:
             while True:
                 wait = None
@@ -1181,7 +1411,7 @@ class Bot:
                     wait = self.on_adb_fail(e)
                 except Exception as e:
                     self.on_error(e)
-                time.sleep(wait or INTERVAL_SEC)
+                self.sleep(wait or INTERVAL_SEC)
         except KeyboardInterrupt:
             log(f"종료 - 가이드 {self.cnt['guide']} / 반복 {self.cnt['repeat']} / "
                 f"30회 뽑기 {self.cnt['summon']} / 재도전 {self.cnt['retry']}")

@@ -31,7 +31,7 @@ VERSION_FILE = os.path.join(BASE, ".version")
 INCOMPLETE_FILE = os.path.join(BASE, ".update_incomplete")
 STAGE_DIR = os.path.join(BASE, ".update_stage")
 BACKUP_DIR = os.path.join(BASE, ".update_backup")
-KEEP = {"logs", "user_settings.py", ".version", "__pycache__", ".git",
+KEEP = {"logs", "user_settings.py", "mode.txt", ".version", "__pycache__", ".git",
         ".update_incomplete", ".update_stage", ".update_backup"}   # 덮어쓰지 않을 것 (소문자로 비교)
 UA = {"User-Agent": "windrunner-guide-auto-updater"}
 
