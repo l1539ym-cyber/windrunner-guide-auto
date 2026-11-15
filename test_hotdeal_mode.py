@@ -156,19 +156,30 @@ for _ in range(10):
     clock.t += g.INTERVAL_SEC
 assert len(taps) == 10, taps
 
-# 7) 소환권 보상 미션 클리어: 분홍이 아니라 흰 얇은 테두리선 → 클리어로 인식, 선이 없으면 진행 중
-def guide_panel(outline):
+# 7) 소환권 보상 미션 클리어: 패널에 빨강·노랑·초록 소환권 카드 무늬 → 클리어, 무늬가 없으면 진행 중
+CARD_BGR = {"노랑": (40, 170, 235), "빨강": (40, 40, 220), "초록": (110, 200, 120)}
+
+
+def guide_panel(card=None):
     s = base_screen()
     s[1145:1258, 238:665] = (60, 50, 45)                      # 어두운 반투명 패널
     paste(s, "guide_label_orange", 345, 1162)
-    if outline:
-        cv2.rectangle(s, (240, 1146), (662, 1254), (235, 240, 245), 2)   # 흰 테두리선
+    if card:
+        for x in range(240, 665, 40):                         # 카드 무늬 (줄무늬로 흉내)
+            s[1146:1256, x:x + 22] = CARD_BGR[card]
+        paste(s, "guide_label_orange", 345, 1162)
     return s
 
 
-st, info = g.read_screen(guide_panel(True))
-assert st == "GUIDE_CLEAR" and "테두리선" in info["why"], (st, info)
-assert g.read_screen(guide_panel(False))[0] == "GUIDE_PROGRESS"
+for name in CARD_BGR:
+    s = guide_panel(name)
+    assert g.read_screen(s)[0] == "GUIDE_CLEAR", name
+    assert g.card_pattern(s) and g.card_pattern(s)[0] == name, (name, g.card_pattern(s))
+assert g.read_screen(guide_panel())[0] == "GUIDE_PROGRESS"
+sky = guide_panel()
+sky[1146:1256, 240:665] = (230, 170, 90)                      # 파란 하늘이 비치는 진행 중 패널
+paste(sky, "guide_label_orange", 345, 1162)
+assert g.read_screen(sky)[0] == "GUIDE_PROGRESS" and g.card_pattern(sky) is None, "파란 배경을 소환권 무늬로 봄"
 
 # 6) mode.txt 저장/읽기
 d = tempfile.mkdtemp()
