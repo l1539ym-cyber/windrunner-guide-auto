@@ -899,6 +899,17 @@ def prune_shots(keep=None):
             pass
 
 
+def _runs(seq):
+    """['A', 'A', 'B'] → [('A', 2), ('B', 1)]"""
+    out = []
+    for x in seq:
+        if out and out[-1][0] == x:
+            out[-1] = (x, out[-1][1] + 1)
+        else:
+            out.append((x, 1))
+    return out
+
+
 def save_shot(img, tag):
     os.makedirs(LOG_DIR, exist_ok=True)
     prune_shots(MAX_SAVED_SHOTS - 1)
@@ -1122,11 +1133,21 @@ class Bot:
         소환 화면에 머무는 시간을 줄인다 (그동안 뒤에서 진 전투의 패배 창은 10초 뒤 저절로 닫힘)."""
         start = time.time()
         log(f"  뽑기 연출 대기 (최대 {AFTER_SUMMON_WAIT_SEC}초, 패배 창만 확인)")
+        seen = []                      # 진단용: 대기 중 본 화면 상태 순서
+        s = None
         while time.time() - start < AFTER_SUMMON_WAIT_SEC:
             time.sleep(1.0)
-            state, _ = self.read_now()
+            s = self.look()
+            state, _ = self.read_now(s)
+            seen.append(state)
             if state in ("SUMMON_RESULT", "CLOSE_TEXT") and time.time() - start >= AFTER_SUMMON_MIN_SEC:
                 return
+        if s is not None and not any(st in ("SUMMON_RESULT", "CLOSE_TEXT") for st in seen):
+            # 진단 (2026-11-17 제보: 소환레벨 선물박스가 빛날 때 뽑기가 안 됨): 30회를 눌렀는데 결과 화면이 끝까지 안 뜸
+            # → 게임이 소환 대신 다른 창(레벨업·보상 등)을 띄웠을 수 있으니 그 화면을 남김
+            flow = ", ".join(f"{st}×{n}" for st, n in _runs(seen))
+            log(f"  ! [진단] 30회를 눌렀는데 {AFTER_SUMMON_WAIT_SEC}초 동안 결과 화면이 안 뜸 ({flow}) - "
+                "화면 저장: " + save_shot(s, "no_summon_result"))
 
     # 패배 -----------------------------------------------------------
     def on_defeat(self, xy):

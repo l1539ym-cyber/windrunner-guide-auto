@@ -58,6 +58,10 @@ assert g.read_screen(SCREENS["기본"])[0] == "BASE_NO_PANEL"
 RETRY_XY = g.read_screen(SCREENS["패배"])[1]["tap"]
 
 
+SCREENS["모름"] = blank()                 # 레벨업·보상 창 등 봇이 모르는 화면
+SHOTS = []                                # save_shot 으로 저장한 화면 태그
+
+
 # ---- 가짜 시계 / 입력 ----
 class Clock:
     t = 1_000_000.0
@@ -79,7 +83,8 @@ def run(script):
     g.tap = lambda x, y: events.append((clock.t - t0.get("summon", clock.t), ("tap", (x, y))))
     g.key = lambda code: events.append((clock.t - t0.get("summon", clock.t), ("key", code)))
     g.log = lambda msg: None
-    g.save_shot = lambda img, tag: "(저장 생략)"
+    SHOTS.clear()
+    g.save_shot = lambda img, tag: (SHOTS.append(tag), "(저장 생략)")[1]
 
     def look(self):
         clock.t += 0.3                                        # 캡처에 걸리는 시간
@@ -118,6 +123,15 @@ assert not any(kind == "key" and 4 <= t < 6.5 for t, (kind, _) in ev), "패배 �
 ev, took = run([(0, "소환"), (2, "결과"), (6, "소환"), (9, "기본")])
 close = taps(ev, g.RESULT_CLOSE_TAP)
 assert close and g.AFTER_SUMMON_MIN_SEC <= close[0] < g.AFTER_SUMMON_WAIT_SEC, (close, ev)
+assert "no_summon_result" not in SHOTS, SHOTS
+
+# 2-1) 진단: 30회를 눌렀는데 결과 화면 없이 모르는 창만 뜸 → 그 화면을 저장 (뽑기는 다시 누르지 않음)
+ev, took = run([(0, "소환"), (1.5, "모름"), (14, "소환"), (16, "기본")])
+assert "no_summon_result" in SHOTS, SHOTS
+assert len(taps(ev, g.SUMMON_30_TAP)) == 1, "30회를 두 번 누름"
+# 2-2) 결과 화면이 늦게라도 (최소 대기 전에) 보였으면 저장하지 않음
+ev, took = run([(0, "소환"), (1.5, "결과"), (2.9, "소환"), (12, "기본")])
+assert "no_summon_result" not in SHOTS, SHOTS
 
 # 3) 소환 화면을 ESC 로 빠져나왔더니 기본 화면 위에 패배 창 → 재도전 후 복귀 완료
 ev, took = run([(0, "소환"), (4, "결과"), (6, "소환"), (9, "패배"), (13, "기본")])
