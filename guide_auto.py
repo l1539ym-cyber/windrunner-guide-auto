@@ -126,6 +126,10 @@ BORDER_ROIS = [(236, 1165, 250, 1235),  # 패널 왼쪽 테두리
 CARD_ROIS = [(600, 1148, 655, 1252),    # 패널 오른쪽 (글자 끝 이후)
              (250, 1240, 655, 1252),    # 패널 아래 띠 (진행도 글자 아래)
              (505, 1148, 600, 1166)]    # 패널 위 띠 (라벨 오른쪽)
+CARD_BG_ROIS = [(150, 1160, 225, 1250),  # 패널 바로 왼쪽 바깥 (스테이지 배경)
+                (680, 1160, 760, 1250)]  # 패널 바로 오른쪽 바깥
+CARD_BG_MAX = 0.30       # 패널 바깥 왼쪽·오른쪽 모두 같은 색이 이 비율 이상이면 카드 무늬가 아니라 배경이 비친 것
+                         #   (카드 무늬 클리어: 둘 중 작은 쪽 ≤0.05 / 노란 와플 스테이지(챕터 693) 진행 중 1.00, 2026-11-16 제보)
 SUMMON_WORD_OFF = (-7, 31, 253, 86)    # 라벨 기준 미션 문구 영역 ('소환' 글자 탐색)
 PANEL_TAP_OFF = (143, 37)              # 라벨 좌상단 → 패널 탭 위치
 GEM_COST_ROI = (570, 1125, 650, 1185)  # 소환 화면 30회 버튼 비용 아이콘
@@ -640,23 +644,32 @@ def border_pink(s):
     return total
 
 
+def _color_ratio(s, rois, ranges):
+    """여러 영역을 합쳐 (채도·밝기 기준을 넘고 H 가 ranges 안인) 픽셀 비율"""
+    cnt = n = 0
+    for x1, y1, x2, y2 in rois:
+        h = cv2.cvtColor(s[y1:y2, x1:x2], cv2.COLOR_BGR2HSV)
+        H, S, V = h[..., 0], h[..., 1], h[..., 2]
+        m = (S > CARD_MIN_S) & (V > CARD_MIN_V)
+        hue = np.zeros_like(m)
+        for lo, hi in ranges:
+            hue |= (H >= lo) & (H <= hi)
+        cnt += int((m & hue).sum())
+        n += m.size
+    return cnt / n
+
+
 def card_pattern(s):
     """소환권 보상 미션 클리어 시 패널에 깔리는 카드 무늬 → (색 이름, 비율) 중 기준을 넘은 것, 없으면 None.
-    진행 중 패널은 어두운 반투명이라 뒤 배경색이 흐리게만 비침 (파란 하늘은 색 범위에서 제외)"""
-    hs = [cv2.cvtColor(s[y1:y2, x1:x2], cv2.COLOR_BGR2HSV) for x1, y1, x2, y2 in CARD_ROIS]
-    n = sum(h.shape[0] * h.shape[1] for h in hs)
+    진행 중 패널은 어두운 반투명이라 뒤 배경색이 비침 (파란 하늘은 색 범위에서 제외).
+    노란 와플처럼 배경 자체가 카드 색이면 진행 중 패널도 기준을 넘으므로, 패널 바깥 배경에도
+    같은 색이 많으면 배경으로 보고 버림"""
     best = None
     for name, (ranges, th) in CARD_COLORS.items():
-        cnt = 0
-        for h in hs:
-            H, S, V = h[..., 0], h[..., 1], h[..., 2]
-            m = (S > CARD_MIN_S) & (V > CARD_MIN_V)
-            hue = np.zeros_like(m)
-            for lo, hi in ranges:
-                hue |= (H >= lo) & (H <= hi)
-            cnt += int((m & hue).sum())
-        r = cnt / n
-        if r >= th and (best is None or r / th > best[1] / CARD_COLORS[best[0]][1]):
+        r = _color_ratio(s, CARD_ROIS, ranges)
+        if r < th or min(_color_ratio(s, [b], ranges) for b in CARD_BG_ROIS) >= CARD_BG_MAX:
+            continue                   # 양쪽 바깥 모두 같은 색 = 배경 (한쪽만은 나무·장식일 수 있음)
+        if best is None or r / th > best[1] / CARD_COLORS[best[0]][1]:
             best = (name, r)
     return best
 
@@ -677,12 +690,12 @@ def read_panel(s):
     border = border_pink(s)
     if border >= BORDER_PINK_TH:                           # 챕터 클리어 등 진행도 숫자가 없는 미션
         return "GUIDE_CLEAR", {"tap": tap_xy, "why": f"분홍 테두리 {border:.2f}"}
-    card = card_pattern(s)
-    if card:                                               # 소환권 보상 미션 클리어 (카드 무늬)
-        return "GUIDE_CLEAR", {"tap": tap_xy, "why": f"소환권 무늬 {card[0]} {card[1]:.2f}"}
     red, white = badge_pixels(s)
     if red >= BADGE_RED_PX and white >= BADGE_WHITE_PX:
         return "GUIDE_CLEAR", {"tap": tap_xy, "why": f"+N 표시 빨강 {red}px"}
+    # 소환 미션(진행 중)은 카드 무늬보다 먼저 본다: 카드 무늬로 잘못 보면 패널을 눌러 소환 화면이 열리고
+    # '다음 미션이 눌림'으로 판단해 뽑지 않고 나오기를 무한 반복함 (2026-11-16 제보)
+    # 소환 미션의 클리어는 위의 진행도 초록으로 잡히고, 소환권 보상 미션 문구에는 '소환'이 없음
     tx1, ty1, tx2, ty2 = (lx + SUMMON_WORD_OFF[0], ly + SUMMON_WORD_OFF[1],
                           lx + SUMMON_WORD_OFF[2], ly + SUMMON_WORD_OFF[3])
     sw = cv2.minMaxLoc(cv2.matchTemplate(white_mask(s[ty1:ty2, tx1:tx2], SUMMON_WORD_VMIN),
@@ -690,6 +703,9 @@ def read_panel(s):
                                          cv2.TM_CCOEFF_NORMED))[1]
     if sw >= SUMMON_WORD_TH:          # 캐릭터 / 소환수 / 탈것 소환 공통
         return "GUIDE_SUMMON", {"tap": tap_xy}
+    card = card_pattern(s)
+    if card:                                               # 소환권 보상 미션 클리어 (카드 무늬)
+        return "GUIDE_CLEAR", {"tap": tap_xy, "why": f"소환권 무늬 {card[0]} {card[1]:.2f}"}
     return "GUIDE_PROGRESS", {}
 
 

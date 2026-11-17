@@ -180,6 +180,13 @@ sky = guide_panel()
 sky[1146:1256, 240:665] = (230, 170, 90)                      # 파란 하늘이 비치는 진행 중 패널
 paste(sky, "guide_label_orange", 345, 1162)
 assert g.read_screen(sky)[0] == "GUIDE_PROGRESS" and g.card_pattern(sky) is None, "파란 배경을 소환권 무늬로 봄"
+# 노란 와플 스테이지 (2026-11-16 제보): 배경이 패널 안팎에 똑같이 노랑 → 카드 무늬 아님
+waffle = base_screen()
+waffle[1100:1300, 100:800] = (60, 140, 200)                   # 노란 와플 배경 (패널 바깥까지)
+waffle[1145:1258, 238:665] = (40, 110, 160)                   # 반투명 패널 너머로 비치는 와플
+paste(waffle, "guide_label_orange", 345, 1162)
+assert g.card_pattern(waffle) is None, ("노란 배경을 소환권 무늬로 봄", g.card_pattern(waffle))
+assert g.read_screen(waffle)[0] == "GUIDE_PROGRESS", g.read_screen(waffle)
 
 # 6) mode.txt 저장/읽기
 d = tempfile.mkdtemp()
