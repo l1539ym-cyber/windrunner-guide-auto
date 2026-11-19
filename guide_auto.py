@@ -82,6 +82,7 @@ HUD_OTHER_TH = 0.65      # 이벤트·랭킹·패스·챕터 (배경 따라 0.75
 HUD_MIN_OTHERS = 2       # 채팅 아이콘 외 UI 요소 중 최소 개수
 GUIDE_LABEL_TH = 0.60    # "[가이드" 주황 글자 (패널 0.89~1.00 / 그 외 ≤0.27)
 REPEAT_LABEL_TH = 0.45   # "[반복]" 하늘색 글자 (패널 0.49~1.00 / 그 외 ≤0.35)
+DAILY_LABEL_TH = 0.65    # "[일일]" 연두색 글자 (패널 0.86~1.00 / 그 외 ≤0.39)
 CLEAR_GREEN_PX = 200     # 클리어 판정 ①: 진행도 "(30/30)" 초록 글자 픽셀 수 (클리어 ≈810 / 진행 중 0)
 BORDER_PINK_TH = 0.30    # 클리어 판정 ②: 패널 왼쪽·오른쪽·아래 테두리의 밝은 분홍 비율 합 (클리어 0.72~2.3 / 진행 중 0.00)
                          #   진행도 숫자가 없는 미션(예: "모험 챕터 476-15 클리어")용. '+N' 표시가 없을 때도 있어 테두리로 판정
@@ -107,6 +108,7 @@ CLOSE_TEXT_SCALES = tuple(round(0.70 + 0.05 * i, 2) for i in range(17))  # 0.70~
 # 색 범위 (OpenCV HSV, H 0~180)
 ORANGE = (10, 24)        # "[가이드-NNNNN]"
 CYAN = (88, 104)         # "[반복]"
+DAILY_GREEN = (38, 52)   # "[일일]" (실측 H 43~45)
 GREEN = (35, 85)         # 클리어 진행도 "(30/30)"
 
 # ---- 좌표 (900x1600 기준 실측) ----
@@ -210,7 +212,9 @@ TPL_DIR = os.path.join(BASE, "templates")
 LOG_DIR = os.path.join(BASE, "logs")
 sys.stdout.reconfigure(encoding="utf-8")
 
-BASE_STATES = ("REPEAT", "GUIDE_CLEAR", "GUIDE_SUMMON", "GUIDE_PROGRESS", "BASE_NO_PANEL")
+BASE_STATES = ("REPEAT", "GUIDE_CLEAR", "GUIDE_SUMMON", "GUIDE_PROGRESS", "DAILY_CLEAR", "DAILY_PROGRESS",
+               "BASE_NO_PANEL")
+CLEAR_STATES = {"GUIDE_CLEAR": "GUIDE_PROGRESS", "DAILY_CLEAR": "DAILY_PROGRESS"}   # 클리어 → 같은 패널의 진행 중
 
 
 # ----------------------------- ADB -----------------------------
@@ -685,6 +689,9 @@ def read_panel(s):
     if g < GUIDE_LABEL_TH and r >= REPEAT_LABEL_TH:
         return "REPEAT", {"tap": (rx + PANEL_TAP_OFF[0], ry + PANEL_TAP_OFF[1])}
     if g < GUIDE_LABEL_TH:
+        d, (dx, dy) = mask_match(s, LABEL_ROI, "daily_label_green", DAILY_GREEN)
+        if d >= DAILY_LABEL_TH:
+            return read_daily_panel(s, (dx + PANEL_TAP_OFF[0], dy + PANEL_TAP_OFF[1]))
         return "BASE_NO_PANEL", {}
     tap_xy = (lx + PANEL_TAP_OFF[0], ly + PANEL_TAP_OFF[1])
     x1, y1, x2, y2 = PROGRESS_ROI
@@ -711,6 +718,19 @@ def read_panel(s):
     if card:                                               # 소환권 보상 미션 클리어 (카드 무늬)
         return "GUIDE_CLEAR", {"tap": tap_xy, "why": f"소환권 무늬 {card[0]} {card[1]:.2f}"}
     return "GUIDE_PROGRESS", {}
+
+
+def read_daily_panel(s, tap_xy):
+    """[일일] 미션 패널 (2026-11-20 제보: 가이드 미션 대신 떠서 '패널 없음'으로 보고 수령도 뽑기도 멈춤).
+    받을 보상이 있으면 가이드 클리어처럼 분홍 테두리 + 빨간 '+N' 표시가 뜨고, 탭하면 보상이 지급되고 가이드 패널로 돌아옴.
+    문구가 '소환 진행하기'여도 수령만 함 (뽑기 안 함)"""
+    border = border_pink(s)
+    if border >= BORDER_PINK_TH:
+        return "DAILY_CLEAR", {"tap": tap_xy, "why": f"분홍 테두리 {border:.2f}"}
+    red, white = badge_pixels(s)
+    if red >= BADGE_RED_PX and white >= BADGE_WHITE_PX:
+        return "DAILY_CLEAR", {"tap": tap_xy, "why": f"+N 표시 빨강 {red}px"}
+    return "DAILY_PROGRESS", {}
 
 
 def find_summon_close(s):
@@ -975,7 +995,7 @@ def read_mode_key():
 class Bot:
     def __init__(self, dry):
         self.dry = dry
-        self.cnt = {"guide": 0, "repeat": 0, "summon": 0, "retry": 0}
+        self.cnt = {"guide": 0, "daily": 0, "repeat": 0, "summon": 0, "retry": 0}
         self.acted = False
         self.last_state = None
         self.window_warned = False
@@ -1419,7 +1439,7 @@ class Bot:
                     log("  ! [반복] 탭 후 소환 화면이 열림 - 뽑지 않고 복귀")
                     self.exit_pending = True
                     self.escape_to_base()
-        elif state == "GUIDE_CLEAR":
+        elif state in CLEAR_STATES:
             if not self.dry:
                 # 수령 직후 다음 미션으로 바뀌는 연출 중에 클리어로 잘못 보고 누르면 다음 미션(소환 등)이 열림
                 # → 잠시 뒤 다시 봐도 클리어일 때만 누름
@@ -1430,31 +1450,35 @@ class Bot:
                     if i:
                         time.sleep(CLEAR_CONFIRM_GAP)
                     state2, info2 = read_screen(self.look())
-                    if state2 == "GUIDE_CLEAR" or state2 != "GUIDE_PROGRESS":
+                    if state2 == state or state2 != CLEAR_STATES[state]:
                         break              # 클리어 확인 / 다른 미션·화면으로 바뀜 → 더 볼 필요 없음
-                if state2 != "GUIDE_CLEAR":
+                if state2 != state:
                     log(f"  클리어 재확인 실패({state2}) - 이번에는 누르지 않음")
                     return
                 info = info2
-            self.tap(info["tap"], f"가이드 클리어 → 보상 수령 ({info['why']})")
             self.panel_tap_at = time.time()
-            self.cnt["guide"] += 1
-            self.summon_block_until = 0
+            if state == "DAILY_CLEAR":
+                self.tap(info["tap"], f"[일일] 미션 클리어 → 보상 수령 ({info['why']})")
+                self.cnt["daily"] += 1
+            else:
+                self.tap(info["tap"], f"가이드 클리어 → 보상 수령 ({info['why']})")
+                self.cnt["guide"] += 1
+                self.summon_block_until = 0
         elif state == "GUIDE_SUMMON":
             if time.time() < self.summon_block_until:
                 return
             self.do_summon(info["tap"])
-        elif state in ("GUIDE_PROGRESS", "BASE_NO_PANEL") and self.mode == "clear":
+        elif state in ("GUIDE_PROGRESS", "DAILY_PROGRESS", "BASE_NO_PANEL") and self.mode == "clear":
             # 클리어 모드: 수령할 미션이 없는 기본 화면에서 돌파 버튼이 보이면 누름 (실패해도 계속)
             bt = find_breakthrough(s)
             if bt:
                 self.tap(bt["tap"], f"[클리어 모드] 돌파 ({bt['why']})")
                 self.cnt["breakthrough"] += 1
-        # 그 외 (GUIDE_PROGRESS / BASE_NO_PANEL / 채팅·길드·상점 등 OTHER / 사용자가 연 소환·결과 화면)
+        # 그 외 (GUIDE_PROGRESS / DAILY_PROGRESS / BASE_NO_PANEL / 채팅·길드·상점 등 OTHER / 사용자가 연 소환·결과 화면)
         # → 아무것도 누르지 않고 다음 주기까지 대기
 
-        if state in ("REPEAT", "GUIDE_CLEAR", "GUIDE_SUMMON", "DEFEAT"):
-            log(f"  누적: 가이드 {self.cnt['guide']} / 반복 {self.cnt['repeat']} / "
+        if state in ("REPEAT", "GUIDE_CLEAR", "DAILY_CLEAR", "GUIDE_SUMMON", "DEFEAT"):
+            log(f"  누적: 가이드 {self.cnt['guide']} / 일일 {self.cnt['daily']} / 반복 {self.cnt['repeat']} / "
                 f"30회 뽑기 {self.cnt['summon']} / 재도전 {self.cnt['retry']}")
 
     def on_bad_resolution(self, size):
@@ -1513,7 +1537,7 @@ class Bot:
                     self.on_error(e)
                 self.sleep(wait or INTERVAL_SEC)
         except KeyboardInterrupt:
-            log(f"종료 - 가이드 {self.cnt['guide']} / 반복 {self.cnt['repeat']} / "
+            log(f"종료 - 가이드 {self.cnt['guide']} / 일일 {self.cnt['daily']} / 반복 {self.cnt['repeat']} / "
                 f"30회 뽑기 {self.cnt['summon']} / 재도전 {self.cnt['retry']}")
 
 

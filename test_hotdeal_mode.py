@@ -188,6 +188,40 @@ paste(waffle, "guide_label_orange", 345, 1162)
 assert g.card_pattern(waffle) is None, ("노란 배경을 소환권 무늬로 봄", g.card_pattern(waffle))
 assert g.read_screen(waffle)[0] == "GUIDE_PROGRESS", g.read_screen(waffle)
 
+
+# 8) [일일] 미션 패널 (2026-11-20 제보): 받을 보상이 있으면 (분홍 테두리 / +N) 탭해서 수령, 문구가 '소환'이어도 뽑지 않음
+def daily_panel(clear=True, badge_only=False):
+    s = base_screen()
+    s[1145:1258, 238:665] = (60, 50, 45)
+    if clear and not badge_only:
+        for x1, y1, x2, y2 in g.BORDER_ROIS:
+            s[y1:y2, x1:x2] = (200, 50, 240)                  # 밝은 분홍 테두리
+    if clear and badge_only:
+        x1, y1, x2, y2 = g.BADGE_ROI
+        s[y1:y2, x1:x2] = (30, 30, 240)                       # 빨간 +N 표시
+        s[y1 + 12:y2 - 12, x1 + 20:x2 - 20] = (255, 255, 255)
+    paste(s, "daily_label_green", 344, 1163)
+    paste(s, "guide_summon_word", 344 + 20, 1163 + 40)        # '소환 진행하기'
+    return s
+
+
+st, info = g.read_screen(daily_panel())
+assert st == "DAILY_CLEAR", st
+assert abs(info["tap"][0] - 490) < 15 and abs(info["tap"][1] - 1201) < 15, info
+assert g.read_screen(daily_panel(badge_only=True))[0] == "DAILY_CLEAR"
+assert g.read_screen(daily_panel(clear=False))[0] == "DAILY_PROGRESS", "진행 중 [일일] 을 클리어/소환으로 봄"
+for st in ("DAILY_CLEAR", "DAILY_PROGRESS"):
+    assert st in g.BASE_STATES
+# 봇: 탭 1번으로 수령, 소환 화면으로 가지 않음
+bot, taps, shots, clock = make_bot(lambda c: daily_panel())
+bot.tick()
+assert len(taps) == 1 and abs(taps[0][0] - 490) < 15 and abs(taps[0][1] - 1201) < 15, taps
+assert bot.cnt["daily"] == 1 and bot.cnt["guide"] == 0 and bot.cnt["summon"] == 0, bot.cnt
+# 진행 중 [일일] 은 누르지 않음 (방치 모드)
+bot, taps, shots, clock = make_bot(lambda c: daily_panel(clear=False))
+bot.tick()
+assert taps == [], taps
+
 # 6) mode.txt 저장/읽기
 d = tempfile.mkdtemp()
 g.MODE_FILE = os.path.join(d, "mode.txt")
