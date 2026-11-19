@@ -25,6 +25,7 @@ def summon_screen():
     s = blank()
     paste(s, "summon_char_tab", 275, 1415)
     paste(s, "summon_30_btn", 620, 1088)
+    paste(s, "summon_close_x", 419, 1497)                  # 아래 줄 빨간 X 버튼
     return paste(s, "summon_cost_ticket_pet", 585, 1136)
 
 
@@ -133,7 +134,18 @@ assert len(taps(ev, g.SUMMON_30_TAP)) == 1, "30회를 두 번 누름"
 ev, took = run([(0, "소환"), (1.5, "결과"), (2.9, "소환"), (12, "기본")])
 assert "no_summon_result" not in SHOTS, SHOTS
 
-# 3) 소환 화면을 ESC 로 빠져나왔더니 기본 화면 위에 패배 창 → 재도전 후 복귀 완료
+# 2-1) 소환 화면은 ESC 가 아니라 X 버튼으로 닫음 (2026-11-19 제보: 소환 화면 뒤에 숨은 패배 창을 ESC 가 닫아
+#      '이전 스테이지 반복'이 되어 돌파가 취소됨. 패배 창은 소환 화면을 닫은 뒤 보이면 재도전)
+X_XY = g.find_summon_close(SCREENS["소환"])
+assert X_XY and abs(X_XY[0] - 450) <= 3 and abs(X_XY[1] - 1528) <= 3, X_XY
+assert g.find_summon_close(SCREENS["기본"]) is None, "기본 화면 메뉴 버튼을 X 로 봄"
+ev, took = run([(0, "소환"), (2, "결과"), (6, "소환"), (9, "패배"), (13, "기본")])
+assert not any(kind == "key" for _, (kind, _) in ev), f"소환 화면에서 ESC 를 보냄 {ev}"
+x_taps = taps(ev, X_XY)
+assert x_taps and all(6 <= t < 9 for t in x_taps), (x_taps, ev)
+assert len(taps(ev, RETRY_XY)) == 1 and taps(ev, RETRY_XY)[0] >= 9, ev
+
+# 3) 소환 화면을 X 로 빠져나왔더니 기본 화면 위에 패배 창 → 재도전 후 복귀 완료
 ev, took = run([(0, "소환"), (4, "결과"), (6, "소환"), (9, "패배"), (13, "기본")])
 assert len(taps(ev, RETRY_XY)) == 1 and 9 <= taps(ev, RETRY_XY)[0] < 13, ev
 

@@ -45,6 +45,7 @@ def setup(script):
 
     g.Bot.look = lambda self: (clock.sleep(0.3), screen_now())[1]
     g.read_screen = lambda name: STATES[name]
+    g.find_summon_close = lambda name: X_XY if name == "소환" else None    # 소환 화면의 빨간 X 버튼
     return g.Bot(False), events, clock, start
 
 
@@ -59,6 +60,14 @@ def taps(events, xy=None):
     return [(t, v) for t, k, v in events if k == "tap" and (xy is None or v == xy)]
 
 
+X_XY = (450, 1528)
+
+
+def closes(events):
+    """소환 화면 X 버튼 탭 시각들"""
+    return [t for t, v in taps(events, X_XY)]
+
+
 def escs(events):
     return [t for t, k, _ in events if k == "key" and _ == g.KEY_ESC]
 
@@ -69,7 +78,8 @@ g.ESC_SETTLE_SEC = 3.0
 run_ticks(bot, clock, start, 30)
 assert len(taps(ev, (490, 1201))) == 1, ev
 assert not taps(ev, g.SUMMON_30_TAP), "봇이 잘못 연 소환 화면에서 30회를 누름"
-assert escs(ev) and escs(ev)[0] < 10, f"소환 화면을 빠져나오지 않음 (방치) {ev}"
+assert closes(ev) and closes(ev)[0] < 10, f"소환 화면을 빠져나오지 않음 (방치) {ev}"
+assert not escs(ev), f"소환 화면에 ESC 를 보냄 (뒤에 숨은 패배 창이 닫힘) {ev}"
 
 # 2) 클리어로 보였지만 다시 보니 다음 미션으로 바뀌는 중 → 누르지 않음
 bot, ev, clock, start = setup([(0, "클리어"), (0.5, "진행중")])
@@ -81,7 +91,8 @@ bot, ev, clock, start = setup([(0, "소환"), (200, "진행중")])
 run_ticks(bot, clock, start, 60)
 assert not ev, f"사용자가 연 소환 화면을 바로 닫음 {ev}"
 run_ticks(bot, clock, start, 120)
-assert escs(ev) and g.SUMMON_IDLE_SEC <= escs(ev)[0] < g.SUMMON_IDLE_SEC + 15, ev
+assert closes(ev) and g.SUMMON_IDLE_SEC <= closes(ev)[0] < g.SUMMON_IDLE_SEC + 15, ev
+assert not escs(ev), ev
 assert not taps(ev, g.SUMMON_30_TAP)
 
 # 4) 사용자가 계속 뽑는 중 (소환 ↔ 결과가 바뀜) → 끼어들지 않음

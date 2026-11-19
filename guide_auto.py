@@ -145,6 +145,10 @@ SUMMON_30_TAP = (687, 1130)            # 소환 화면 '30회' 버튼
 SUMMON_TAB_ROI = (235, 1375, 380, 1485)   # 소환 화면 아래 '캐릭터' 탭 글자 (캐릭터·소환수·탈것 화면 모두 같은 자리)
 SUMMON_BTN_ROI = (580, 1048, 800, 1170)   # 소환 화면 '30회' 버튼 (SUMMON_30_TAP 이 이 안에 있어야 함)
 RESULT_CLOSE_TAP = (450, 1487)         # 소환 결과 '터치하여 닫기' (결과 화면은 ESC 무반응)
+SUMMON_CLOSE_ROI = (395, 1470, 505, 1585) # 소환 화면 아래 줄 가운데 빨간 X 버튼 (캐릭터·소환수·탈것 같은 자리)
+SUMMON_CLOSE_TH = 0.85                    # X 버튼 템플릿 (소환 화면 1.00 / 기본 화면 같은 자리 메뉴 버튼 ≤0.69)
+# 소환 화면은 ESC 대신 X 버튼으로 닫는다. 소환 화면 뒤(전투 화면)에 패배 창이 떠 있으면 캡처에는 안 보이지만
+# ESC(뒤로 가기)는 패배 창이 먼저 받아서 닫아 버림 = '이전 스테이지 반복' → 돌파가 취소됨 (2026-11-19 제보)
 ESC_SETTLE_SEC = 3.0                   # ESC 후 화면 전환 대기 (연속 ESC 방지)
 EXIT_MAX_STEPS = 20                    # 뽑기 후 기본 화면 복귀 시도 횟수 (1.5초 간격)
 UNKNOWN_FALLBACK = 5                   # 복귀 중 모르는 화면이 이만큼 연속되면 ESC 한 번 (아무 곳이나 누르지 않음)
@@ -709,6 +713,15 @@ def read_panel(s):
     return "GUIDE_PROGRESS", {}
 
 
+def find_summon_close(s):
+    """소환 화면의 빨간 X 버튼 → 탭 좌표 또는 None (같은 자리가 기본 화면에서는 메뉴 버튼이라 반드시 확인 후 탭)"""
+    sc, (x, y) = match_in(s, SUMMON_CLOSE_ROI, "summon_close_x")
+    if sc < SUMMON_CLOSE_TH:
+        return None
+    h, w = T("summon_close_x").shape[:2]
+    return (x + w // 2, y + h // 2)
+
+
 def is_summon_screen(s):
     """캐릭터 / 소환수 / 탈것 소환 화면 (30회 버튼 + 아래 탭 줄의 '캐릭터' 글자).
     '캐릭터' 글자는 캐릭터 탭이 선택돼 있을 때 더 밝아서, 기준을 소환수·탈것 탭 점수(0.88)보다 낮게 둔다."""
@@ -1056,7 +1069,11 @@ class Bot:
                 self.tap(info["tap"], f"닫기 문구 탭 ('신규' 등, {info['name']} {info['score']:.2f})")
                 unknown = 0
             elif state == "SUMMON_SCREEN":
-                self.esc("소환 화면 빠져나오기")
+                xy = find_summon_close(s)
+                if xy:
+                    self.tap(xy, "소환 화면 빠져나오기 (X 버튼)")
+                else:                  # X 버튼을 못 찾을 때만 ESC (뒤에 숨은 패배 창을 닫을 수 있어 최후 수단)
+                    self.esc("소환 화면 빠져나오기 (X 버튼 못 찾음)")
                 unknown = 0
                 time.sleep(ESC_SETTLE_SEC)
             elif state == "OTHER":
