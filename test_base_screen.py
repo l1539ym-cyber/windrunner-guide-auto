@@ -1,5 +1,5 @@
 """is_base_screen() 자가 점검: python test_base_screen.py
-기본 화면 UI 요소를 붙인 가짜 화면으로 채팅 아이콘 종류(말풍선 / 길드 방패)·배경색·어두운 팝업 판정을 확인한다.
+기본 화면 UI 요소를 붙인 가짜 화면으로 채팅 아이콘 종류(말풍선 / 길드 방패 / 전체 채팅 지구본)·배경색·어두운 팝업 판정을 확인한다.
 (실제 화면 캡처는 개인 정보가 있어 저장소에 넣지 않으므로 템플릿만으로 만든다)"""
 import numpy as np
 
@@ -26,7 +26,7 @@ def screen(bg, chat=None, others=("hud_event", "hud_ranking", "hud_pass", "hud_c
 
 
 for bg_name, bg in BACKGROUNDS.items():
-    for chat in ("bubble", "guild"):
+    for chat in ("bubble", "guild", "world"):
         s = screen(bg, chat)
         assert g.is_base_screen(s), (bg_name, chat, g.hud_summary(s))
         assert g.chat_score(s)[1] == chat, (bg_name, chat, g.chat_score(s))

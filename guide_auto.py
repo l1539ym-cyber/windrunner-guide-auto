@@ -1373,6 +1373,10 @@ class Bot:
             elif time.time() - self.other_since > 120:
                 log("  ! 2분 넘게 기본 화면이 아님 - 화면 저장: " + save_shot(s, "long_wait"))
                 log("    기본 화면 판정 점수: " + hud_summary(s))
+                sc = hud_scores(s)
+                if sc["chat"] < HUD_TH and all(v >= HUD_OTHER_TH for k, v in sc.items() if k != "chat"):
+                    log("    ! 위쪽·오른쪽 UI 는 모두 보이는데 왼쪽 아래 채팅 아이콘만 다름 - 채팅창이 열려 있지 않다면 "
+                        "게임의 채팅 아이콘 모양이 바뀐 것일 수 있음 (templates/hud/chat/ 에 새 아이콘 추가 필요, 버그 제보 부탁)")
                 self.other_since = time.time() + 10 ** 9      # 다음 기본 화면 전까지 다시 저장 안 함
         else:
             self.other_since = None
